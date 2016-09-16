@@ -180,7 +180,7 @@ class BSRT(object):
            tau_init=t2_fit/(np.log(epst2_fit)-np.log(epst1_fit))
            p,pcov=curve_fit(exp_fit,data['time'],data['emit%s'%plane],p0=[a_init,tau_init])
            psig=[np.sqrt(pcov[i,i]) for i in range(len(p))]
-           fit_data+=[p[0],p[1],psig[0],psig[1]]
+           fit_data+=[p[0],psig[0],p[1],psig[1]]
          ftype=[('t1',float),('t2',float),('ah',float),('sigah',float),('tauh',float),('sigtauh',float),('av',float),('sigav',float),('tauv',float),('sigtauv',float)]
          bsrt_fit_dict[slot] = np.array([tuple(fit_data)],dtype=ftype)
        except IndexError:
