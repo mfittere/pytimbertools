@@ -3,8 +3,9 @@ import os as os
 try:
   import numpy as np
   import matplotlib.pyplot as pl
+  from scipy.optimize import curve_fit
 except ImportError:
-  print "No module found: numpy matplotlib and scipy modules should be present to run pytimbertools"
+  print "No module found: numpy, matplotlib and scipy modules should be present to run pytimbertools"
 
 try:
   import pytimber
@@ -15,6 +16,9 @@ try:
   from beams import *
 except ImportError:
   print "beams module can not be found!"
+
+def exp_fit(x,a,tau):
+  return a*np.exp(x/tau)
 
 def _get_timber_data(beam,t1,t2,db=None):
   """retrieve data from timber needed for
@@ -117,7 +121,7 @@ class BSRT(object):
             emith=beamparam.emitnorm(np.mean((bsrt_aux['sigh']**2-bsrt_aux['lsfh']**2)/bsrt_aux['beth']),EGeV)
             emitv=beamparam.emitnorm(np.mean((bsrt_aux['sigv']**2-bsrt_aux['lsfv']**2)/bsrt_aux['betv']),EGeV)
             bsrt_emit.append((k,emith,emitv))
-        bsrt_dict[j]=np.array(bsrt_emit,dtype=[('time',float),('emith',float),('emitv',float)])
+        bsrt_dict[j]=np.sort(np.array(bsrt_emit,dtype=[('time',float),('emith',float),('emitv',float)]),axis=0)#sort after the time
     return cls(emit=bsrt_dict)
   def get_timber_data(self,beam,t1,t2,db=None):
     """retrieve data from timber needed for
@@ -138,5 +142,48 @@ class BSRT(object):
                 'beth','betv']
     """
     return _get_timber_data(beam,t1,t2,db)
+  def fit(self,t1,t2):
+    """fit the emittance between t1 and t2
+    with an exponential function:
+      a*exp(t/tau)
+    Paramters:
+    ----------
+    t1: start time in unix time
+    t2: end time in unix time
 
+    Returns:
+    --------
+    a,tau: fit parameters a (initial value [um]) and
+           tau (growth time [s])
+    """
+    # check that the data has been extracted
+    if len(self.emit)==0:
+      print "ERROR: first extract the emittance data using BSRT.get(beam,EGeV,t1,t2,db)"
+      return
+    # loop over all slots
+    bsrt_fit_dict={}
+    for slot in self.emit.keys():
+       mask = (self.emit[slot]['time']>=t1) & (self.emit[slot]['time']<=t2)
+       data = self.emit[slot][mask]
+       try:
+         # subtract initial time to make fitting easier
+         data['time']=data['time']-data['time'][0]
+         # give a guess for the initial paramters
+         # assume eps(t1)=a*exp(t1/tau)
+         #        eps(t2)=a*exp(t2/tau)
+         fit_data = [t1,t2]
+         for plane in ['h','v']:
+           t2_fit=data['time'][-1]-data['time'][0]
+           epst2_fit=data['emit%s'%plane][-1]
+           epst1_fit=data['emit%s'%plane][0]
+           a_init=epst1_fit
+           tau_init=t2_fit/(np.log(epst2_fit)-np.log(epst1_fit))
+           p,pcov=curve_fit(exp_fit,data['time'],data['emit%s'%plane],p0=[a_init,tau_init])
+           psig=[np.sqrt(pcov[i,i]) for i in range(len(p))]
+           fit_data+=[p[0],p[1],psig[0],psig[1]]
+         ftype=[('t1',float),('t2',float),('ah',float),('sigah',float),('tauh',float),('sigtauh',float),('av',float),('sigav',float),('tauv',float),('sigtauv',float)]
+         bsrt_fit_dict[slot] = np.array([tuple(fit_data)],dtype=ftype)
+       except IndexError:
+         print 'no data found for slot %s'%slot
+    return bsrt_fit_dict
 
