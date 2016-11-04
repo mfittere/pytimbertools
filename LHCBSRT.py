@@ -145,7 +145,7 @@ class BSRT(object):
   def fit(self,t1,t2):
     """fit the emittance between t1 and t2
     with an exponential function:
-      a*exp(t/tau)
+      a*exp((t-t1)/tau)
     Paramters:
     ----------
     t1: start time in unix time
@@ -176,6 +176,12 @@ class BSRT(object):
            t2_fit=data['time'][-1]-data['time'][0]
            epst2_fit=data['emit%s'%plane][-1]
            epst1_fit=data['emit%s'%plane][0]
+           if epst2_fit < 0:
+             print 'ERROR: invalid value of BSRT emittance (eps < 0) for time t2=%s'%pytimber.parsedate(data['time'][-1])
+             return
+           if epst1_fit < 0:
+             print 'ERROR: invalid value of BSRT emittance (eps < 0) for time t1=%s'%pytimber.parsedate(data['time'][0])
+             return
            a_init=epst1_fit
            tau_init=t2_fit/(np.log(epst2_fit)-np.log(epst1_fit))
            p,pcov=curve_fit(exp_fit,data['time'],data['emit%s'%plane],p0=[a_init,tau_init])
@@ -186,4 +192,49 @@ class BSRT(object):
        except IndexError:
          print 'no data found for slot %s'%slot
     return bsrt_fit_dict
-
+  def plot(self,t1,t2,plane='h',slots=None,verbose=False,color=None,fit=True,label=None):
+    """plot bsrt data and fit.
+    Parameters:
+    -----------
+    slot: slot number, if None, all slots are plotted
+    fit: fit curve from exponential fit
+    """
+    if fit == True:
+      if verbose: print '... fitting BSRT data with a*exp(-t/tau) fit'
+      bsrt_fit_dic=self.fit(t1,t2)
+    if slots == None: slots=self.emit.keys()
+    try:
+      len(slots)
+    except TypeError:
+      slots=[slots]
+    colors=['b','r','g','m','orange','pink','cyan','indigo','lime']
+    colors.reverse()
+    for slot in slots:
+      if color==None: c=colors.pop()
+      else: c=color
+      mask = (self.emit[slot]['time']>=t1) & (self.emit[slot]['time']<=t2)
+      eps = self.emit[slot][mask]
+      pl.plot(eps['time'],eps['emit%s'%plane],'.',color=c,label=label)
+      if fit:
+        pl.plot(eps['time'],exp_fit(eps['time']-eps['time'][0],bsrt_fit_dic[slot]['a%s'%plane],bsrt_fit_dic[slot]['tau%s'%plane]),linestyle='--',color='k')
+  def plot_fit(self,t1,t2,plane='h',slots=None,verbose=False,color=None,label=None):
+    """plot bsrt fit.
+    Parameters:
+    -----------
+    slots: slot number, if None, all slots are plotted
+    """
+    if verbose: print '... fitting BSRT data with a*exp(-t/tau) fit'
+    bsrt_fit_dic=self.fit(t1,t2)
+    if slots == None: slots=self.emit.keys()
+    try:
+      len(slots)
+    except TypeError:
+      slots=[slots]
+    colors=['b','r','g','m','orange','pink','cyan','indigo','lime']
+    colors.reverse()
+    for slot in slots:
+      if color==None: c=colors.pop()
+      else: c=color
+      mask = (self.emit[slot]['time']>=t1) & (self.emit[slot]['time']<=t2)
+      eps = self.emit[slot][mask]
+      pl.plot(eps['time'],exp_fit(eps['time']-eps['time'][0],bsrt_fit_dic[slot]['a%s'%plane],bsrt_fit_dic[slot]['tau%s'%plane]),linestyle='-',color=c,label=label)
