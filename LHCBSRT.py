@@ -20,6 +20,13 @@ except ImportError:
 def exp_fit(x,a,tau):
   return a*np.exp(x/tau)
 
+def movingaverage (data,navg):
+  """calculates the moving average over
+  *navg* data points"""
+  weights = np.repeat(1.0, navg)/navg
+  dataavg = np.convolve(data, weights, 'valid')
+  return dataavg
+
 def _get_timber_data(beam,t1,t2,db=None):
   """retrieve data from timber needed for
   emittance calculation
@@ -192,12 +199,15 @@ class BSRT(object):
        except IndexError:
          print 'no data found for slot %s'%slot
     return bsrt_fit_dict
-  def plot(self,t1,t2,plane='h',slots=None,verbose=False,color=None,fit=True,label=None):
+  def plot(self,t1,t2,plane='h',slots=None,verbose=False,color=None,avg=10,fit=True,label=None):
     """plot bsrt data and fit.
     Parameters:
     -----------
     slot: slot number, if None, all slots are plotted
-    fit: fit curve from exponential fit
+    avg: moving average over *avg* data points, if
+         avg = None, the raw data is plotted
+    fit: fit curve from exponential fit on raw data
+         (not averaged)
     """
     if fit == True:
       if verbose: print '... fitting BSRT data with a*exp(-t/tau) fit'
@@ -214,11 +224,18 @@ class BSRT(object):
       else: c=color
       mask = (self.emit[slot]['time']>=t1) & (self.emit[slot]['time']<=t2)
       eps = self.emit[slot][mask]
-      pl.plot(eps['time'],eps['emit%s'%plane],'.',color=c,label=label)
+      if avg == None:
+        pl.plot(eps['time'],eps['emit%s'%plane],'.',color=c,label=label)
+      else:
+        epsavg={} # use a dictionary instead of a structured array
+        for k in eps.dtype.fields:
+          epsavg[k] = movingaverage(eps[k],avg)
+        pl.plot(epsavg['time'],epsavg['emit%s'%plane],'.',color=c,label=label)
       if fit:
         pl.plot(eps['time'],exp_fit(eps['time']-eps['time'][0],bsrt_fit_dic[slot]['a%s'%plane],bsrt_fit_dic[slot]['tau%s'%plane]),linestyle='--',color='k')
   def plot_fit(self,t1,t2,plane='h',slots=None,verbose=False,color=None,label=None):
-    """plot bsrt fit.
+    """plot only fit of BSRT data without showing
+    the data.
     Parameters:
     -----------
     slots: slot number, if None, all slots are plotted
@@ -238,3 +255,4 @@ class BSRT(object):
       mask = (self.emit[slot]['time']>=t1) & (self.emit[slot]['time']<=t2)
       eps = self.emit[slot][mask]
       pl.plot(eps['time'],exp_fit(eps['time']-eps['time'][0],bsrt_fit_dic[slot]['a%s'%plane],bsrt_fit_dic[slot]['tau%s'%plane]),linestyle='-',color=c,label=label)
+
