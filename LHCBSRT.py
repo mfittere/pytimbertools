@@ -17,15 +17,7 @@ try:
 except ImportError:
   print "beams module can not be found!"
 
-def exp_fit(x,a,tau):
-  return a*np.exp(x/tau)
-
-def movingaverage (data,navg):
-  """calculates the moving average over
-  *navg* data points"""
-  weights = np.repeat(1.0, navg)/navg
-  dataavg = np.convolve(data, weights, 'valid')
-  return dataavg
+from toolbox import *
 
 def _get_timber_data(beam,t1,t2,db=None):
   """retrieve data from timber needed for
@@ -233,7 +225,7 @@ class BSRT(object):
         pl.plot(epsavg['time'],epsavg['emit%s'%plane],'.',color=c,label=label)
       if fit:
         pl.plot(eps['time'],exp_fit(eps['time']-eps['time'][0],bsrt_fit_dic[slot]['a%s'%plane],bsrt_fit_dic[slot]['tau%s'%plane]),linestyle='--',color='k')
-  def plot_fit(self,t1,t2,plane='h',slots=None,verbose=False,color=None,label=None):
+  def plot_fit(self,t1,t2,plane='h',slots=None,verbose=False,color=None,linestyle=None,label=None):
     """plot only fit of BSRT data without showing
     the data.
     Parameters:
@@ -252,7 +244,9 @@ class BSRT(object):
     for slot in slots:
       if color==None: c=colors.pop()
       else: c=color
+      if linestyle==None: ls = '-'
+      else: ls = linestyle
       mask = (self.emit[slot]['time']>=t1) & (self.emit[slot]['time']<=t2)
       eps = self.emit[slot][mask]
-      pl.plot(eps['time'],exp_fit(eps['time']-eps['time'][0],bsrt_fit_dic[slot]['a%s'%plane],bsrt_fit_dic[slot]['tau%s'%plane]),linestyle='-',color=c,label=label)
+      pl.plot(eps['time'],exp_fit(eps['time']-eps['time'][0],bsrt_fit_dic[slot]['a%s'%plane],bsrt_fit_dic[slot]['tau%s'%plane]),linestyle=ls,color=c,label=label)
 
