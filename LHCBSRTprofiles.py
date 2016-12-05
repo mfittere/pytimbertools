@@ -203,7 +203,8 @@ class BSRTprofiles(object):
     return cls(fn=fn, records=records, profiles=profiles)
   def smooth_profile_stefania(self, slot = None, time_stamp = None, plane = 'h'):
     #select profile for slot and time stamp                             
-    profs = self.get_profile(slot=slot,time_stamp=time_stamp,           
+    profs = self.get_profile(slot=slot,time_stamp=time_stamp,
+                             plane=plane)
     profs_smooth = profs.copy() # new array with smoothened profile
     for i in xrange(len(profs)):
       x = profs[i]['pos']
@@ -240,7 +241,7 @@ class BSRTprofiles(object):
     pl.grid(b=True)
     pl.legend(loc='best')
     ts = ld.dumpdate(t=time_stamp*1.e-9,fmt='%Y-%m-%d %H:%M:%S.SSS',
-                     zone=ld.myzones['cern']) # convert ns -> s
+                     zone='cern') # convert ns -> s
     pl.gca().set_title('%s plane, %s'%(plane.upper(),ts))
   def mk_profile_video(self, slot = None, plt_dir='BSRTprofile_gifs',
                        export=False,verbose=False,delay=20):
@@ -261,9 +262,9 @@ class BSRTprofiles(object):
     # dictionary to store failed profiles
     profs_failed = {}
     for plane in ['h','v']:
+      # set slot and plane, initialize variables
       profs_failed[plane] = {}
       pl.figure(plane,figsize=(8,8))
-      # select slots
       # all bunches
       if slot is None:
         slots = self.profiles[plane].keys()
@@ -281,6 +282,7 @@ class BSRTprofiles(object):
         if verbose: 
           print( '... total number of profiles ' +
                  str(len(set(profs['time_stamp']))) )
+        # generate png of profiles for each timestamps
         for time_stamp in np.sort(list(set(profs['time_stamp']))):
           pl.clf()
           mask = profs['time_stamp'] == time_stamp
@@ -295,13 +297,13 @@ class BSRTprofiles(object):
                 'profile %s, time stamp %s failed.'%(i,time_stamp) +
                 ' len(x) =%s, len(y) = %s'%(len(profs_ts[i]['pos']),
                  len(profs_ts[i]['amp'])))
-              profs_failed[plane][slot].append([time_stamp])
+              profs_failed[plane][slot].append(time_stamp)
               pass
           pl.grid(b=True)                                                     
           pl.legend(loc='best')                                               
           # convert ns -> s before creating date string      
           ts = ld.dumpdate(t=time_stamp*1.e-9,
-                   fmt='%Y-%m-%d %H:%M:%S.SSS',zone=ld.myzones['cern'])
+                   fmt='%Y-%m-%d %H:%M:%S.SSS',zone='cern')
           pl.gca().set_title('bunch %s, %s plane, %s'%(slot, 
                              plane.upper(),ts))               
           fnpl = os.path.join(tmpdir,'bunch_%s_plane_%s_%05d.png'%(slot,
@@ -309,19 +311,22 @@ class BSRTprofiles(object):
           if verbose: print '... save png %s'%(fnpl)
           pl.savefig(fnpl)
           pngcount += 1
+        # create video from pngs
+        if verbose: print '... creating .gif file with convert'
         cmd="convert -delay %s %s %s"%(delay,
              os.path.join(tmpdir,'bunch_%s_plane_%s_*.png'%(slot,plane)),
              os.path.join(plt_dir,'bunch_%s_plane_%s.gif'%(slot,plane)))
         os.system(cmd)
-        if verbose: print '... creating .gif file with convert'
         # delte png files already
-        if export == False:
+        if (export is False) and (os.path.exists(tmpdir) is True):
           shutil.rmtree(tmpdir)
     for plane in profs_failed.keys():
       for slot in profs_failed[plane].keys():
          if len(profs_failed[plane][slot])>0:
-            print('WARNING: plotting of profile failed for timestamps:')
+            print('WARNING: plotting of profiles for plane %s'%(plane) +
+            'and slot %s failed for timestamps:'%(slot))
             ts = tuple(set(profs_failed[plane][slot]))
             lts = len(ts)
             print(('%s, '*lts)%ts)
-    if export == False: shutil.rmtree(tmpdir)
+    if (export is False) and (os.path.exists(tmpdir) is True):
+      shutil.rmtree(tmpdir)
