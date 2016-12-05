@@ -215,6 +215,12 @@ class BSRTprofiles(object):
                      return_sorted=True).T 
       # find x where y is max in order to define left and right side 
       # of each distribution
+  def get_timestamps(self, slot = None, plane = 'h'):
+    """
+    get all time stamps in unix time [ns] for slot *slot* and
+    plane *plane*
+    """
+    return np.sort(list(set(self.profiles[plane][slot]['time_stamp'])))
   def get_profile(self, slot = None, time_stamp = None, plane = 'h'):
     """
     get profile data for slot *slot*, time stamp *time_stamp* as
@@ -222,7 +228,38 @@ class BSRTprofiles(object):
     """
     mask = self.profiles[plane][slot]['time_stamp'] == time_stamp
     return self.profiles[plane][slot][mask]
-  def plot_profile(self, slot = None, time_stamp = None, plane = 'h'):
+  def get_profile_norm(self, slot = None, time_stamp = None, 
+                       plane = 'h'):
+    """
+    get normalized profile data for slot *slot*, time stamp
+    *time_stamp* as unix time [ns] and plane *plane*. Profiles are 
+    normalized to represent a probability distribution, explicitly:
+      norm_data = raw_data/(int(raw_data))
+    so that:
+      int(norm_data) = 1
+    
+    Note:
+    -----
+    profile data is assumed to be equally spaced in x
+    """
+    profs = self.get_profile(slot=slot,time_stamp=time_stamp,
+                             plane=plane) 
+    for i in xrange(len(profs)):
+      # assume equal spacing
+      try:
+        dx = profs[i]['pos'][1]-profs[i]['pos'][0]
+        prof_int = (dx*profs[i]['amp']).sum()
+        profs[i]['amp'] = profs[i]['amp']/prof_int
+      except ValueError:
+        if verbose:
+          print('ERROR: no data found for bunch %s, '%(slot) +
+          'profile %s, time stamp %s.'%(i,time_stamp) +
+          ' len(x) =%s, len(y) = %s'%(len(profs[i]['pos']),
+           len(profs[i]['amp'])))
+          pass
+    return profs 
+  def plot_profile(self, slot = None, time_stamp = None, plane = 'h',
+                   norm = True, verbose = False):
     """
     Plot all profiles for specific bunch and time. Plot title displays 
     'Europe/Zurich' time.
@@ -232,19 +269,45 @@ class BSRTprofiles(object):
     slot : slot number
     time_stamp : time stamp in unix time
     plane : plane of profile, either 'h' or 'v'
+    norm : if norm = false raw profiles are plotted
+           if norm = True profiles are normalized to represent a 
+                     probability distribution, explicitly:
+                        norm_data = raw_data/(int(raw_data))
+                     so that:
+                        int(norm_data) = 1
+    verbose : verbose option for additional output
     """
+    # list for failed timestamps (used for mk_profile_video)
+    profs_failed = False
     #select profile for slot and time stamp
-    profs = self.get_profile(slot=slot,time_stamp=time_stamp,
-                             plane=plane)
+    if norm:
+      profs = self.get_profile_norm(slot=slot,time_stamp=time_stamp,
+                                    plane=plane)
+    else:
+      profs = self.get_profile(slot=slot,time_stamp=time_stamp,
+                               plane=plane)
     for i in xrange(len(profs)):
-      pl.plot(profs[i]['pos'],profs[i]['amp'],label = 'profile %s'%i)
+      try:
+        pl.plot(profs[i]['pos'],profs[i]['amp'],label = 'profile %s'%i)
+      except ValueError:
+        if verbose:
+          print('ERROR: plotting of bunch %s, '%(slot) +
+          'profile %s, time stamp %s failed.'%(i,time_stamp) +
+          ' len(x) =%s, len(y) = %s'%(len(profs_ts[i]['pos']),
+           len(profs_ts[i]['amp'])))
+          profs_failed = True
+          pass
     pl.grid(b=True)
     pl.legend(loc='best')
-    ts = ld.dumpdate(t=time_stamp*1.e-9,fmt='%Y-%m-%d %H:%M:%S.SSS',
-                     zone='cern') # convert ns -> s
-    pl.gca().set_title('%s plane, %s'%(plane.upper(),ts))
+    # convert ns -> s before creating date string
+    ts = ld.dumpdate(t=time_stamp*1.e-9,
+             fmt='%Y-%m-%d %H:%M:%S.SSS',zone='cern')
+    pl.gca().set_title('bunch %s, %s plane, %s'%(slot,
+                             plane.upper(),ts))
+    return profs_failed
   def mk_profile_video(self, slot = None, plt_dir='BSRTprofile_gifs',
-                       export=False,verbose=False,delay=20):
+                       delay=20, norm = True, export=False, 
+                       verbose=False):
     """
     Generates a video of the profiles of bunch with *slot*
 
@@ -254,9 +317,15 @@ class BSRTprofiles(object):
            are selected. In case of several bunch, on video is 
            generated per bunch
     plt_dir : directory to save videos
+    delay : option for convert to define delay between pictures
+    norm : if norm = false raw profiles are plotted
+           if norm = True profiles are normalized to represent a 
+                     probability distribution, explicitly:
+                        norm_data = raw_data/(int(raw_data))
+                     so that:
+                        int(norm_data) = 1
     export : If True do not delete png files
     verbose : verbose option for additional output
-    delay : option for convert to define delay between pictures
     """
     tmpdir = os.path.join(plt_dir,'tmp_bsrtprofiles')
     # dictionary to store failed profiles
@@ -277,35 +346,18 @@ class BSRTprofiles(object):
         profs_failed[plane][slot] = []
         if verbose:
           print('... generating plots for bunch %s'%slot)
-        profs = self.profiles[plane][slot]
+        time_stamps = self.get_timestamps(slot=slot,plane=plane)
         pngcount = 0
         if verbose: 
-          print( '... total number of profiles ' +
-                 str(len(set(profs['time_stamp']))) )
+          print( '... total number of profiles %s'%(len(time_stamps)))
         # generate png of profiles for each timestamps
-        for time_stamp in np.sort(list(set(profs['time_stamp']))):
+        for time_stamp in time_stamps:
           pl.clf()
-          mask = profs['time_stamp'] == time_stamp
-          profs_ts = profs[mask]
-          for i in xrange(len(profs_ts)):                                        
-            try: 
-              pl.plot(profs_ts[i]['pos'],profs_ts[i]['amp'],
-                      label='profile %s'%i)   
-            except ValueError:
-              if verbose: 
-                print('ERROR: plotting of bunch %s, '%(slot) +
-                'profile %s, time stamp %s failed.'%(i,time_stamp) +
-                ' len(x) =%s, len(y) = %s'%(len(profs_ts[i]['pos']),
-                 len(profs_ts[i]['amp'])))
-              profs_failed[plane][slot].append(time_stamp)
-              pass
-          pl.grid(b=True)                                                     
-          pl.legend(loc='best')                                               
-          # convert ns -> s before creating date string      
-          ts = ld.dumpdate(t=time_stamp*1.e-9,
-                   fmt='%Y-%m-%d %H:%M:%S.SSS',zone='cern')
-          pl.gca().set_title('bunch %s, %s plane, %s'%(slot, 
-                             plane.upper(),ts))               
+          # 1) profile plot
+          flaux = self.plot_profile(slot=slot,time_stamp=time_stamp,
+                                    plane=plane)
+          # if plot failed, flaux = True -> append t profs_failed
+          if flaux: profs_failed[plane][slot].append(time_stamp)
           fnpl = os.path.join(tmpdir,'bunch_%s_plane_%s_%05d.png'%(slot,
                               plane,pngcount))
           if verbose: print '... save png %s'%(fnpl)
@@ -320,6 +372,7 @@ class BSRTprofiles(object):
         # delte png files already
         if (export is False) and (os.path.exists(tmpdir) is True):
           shutil.rmtree(tmpdir)
+    # print a warning for all failed plots
     for plane in profs_failed.keys():
       for slot in profs_failed[plane].keys():
          if len(profs_failed[plane][slot])>0:
@@ -328,5 +381,6 @@ class BSRTprofiles(object):
             ts = tuple(set(profs_failed[plane][slot]))
             lts = len(ts)
             print(('%s, '*lts)%ts)
+    # delete temporary directory
     if (export is False) and (os.path.exists(tmpdir) is True):
       shutil.rmtree(tmpdir)
