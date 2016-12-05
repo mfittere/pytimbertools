@@ -202,8 +202,8 @@ class BSRTprofiles(object):
         prof[k] = np.array(prof[k], dtype=ftype)
     return cls(fn=fn, records=records, profiles=profiles)
   def smooth_profile_stefania(self, slot = None, time_stamp = None, plane = 'h'):
-    mask = self.profiles[plane][slot]['time_stamp'] == time_stamp
-    profs = self.profiles[plane][slot][mask] # original profiles
+    #select profile for slot and time stamp                             
+    profs = self.get_profile(slot=slot,time_stamp=time_stamp,           
     profs_smooth = profs.copy() # new array with smoothened profile
     for i in xrange(len(profs)):
       x = profs[i]['pos']
@@ -214,6 +214,13 @@ class BSRTprofiles(object):
                      return_sorted=True).T 
       # find x where y is max in order to define left and right side 
       # of each distribution
+  def get_profile(self, slot = None, time_stamp = None, plane = 'h'):
+    """
+    get profile data for slot *slot*, time stamp *time_stamp* as
+    unix time [ns] and plane *plane*
+    """
+    mask = self.profiles[plane][slot]['time_stamp'] == time_stamp
+    return self.profiles[plane][slot][mask]
   def plot_profile(self, slot = None, time_stamp = None, plane = 'h'):
     """
     Plot all profiles for specific bunch and time. Plot title displays 
@@ -226,8 +233,8 @@ class BSRTprofiles(object):
     plane : plane of profile, either 'h' or 'v'
     """
     #select profile for slot and time stamp
-    mask = self.profiles[plane][slot]['time_stamp'] == time_stamp
-    profs = self.profiles[plane][slot][mask]
+    profs = self.get_profile(slot=slot,time_stamp=time_stamp,
+                             plane=plane)
     for i in xrange(len(profs)):
       pl.plot(profs[i]['pos'],profs[i]['amp'],label = 'profile %s'%i)
     pl.grid(b=True)
