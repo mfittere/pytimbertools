@@ -59,12 +59,12 @@ def dumpdate(t,fmt='%Y-%m-%d %H:%M:%S.SSS',zone=myzones['cern']):
   """
   ti = int(t)
   tf = t-ti
-  utc = pytz.timezone('UTC')
-  utc_dt = datetime.utcfromtimestamp(t)
-  utc_dt = utc_dt.replace(tzinfo = utc)
   if zone is None:
     s = time.strftime(fmt,time.localtime(t))
   else:
+    utc = pytz.timezone('UTC')
+    utc_dt = datetime.utcfromtimestamp(t)
+    utc_dt = utc_dt.replace(tzinfo = utc)
     tz = pytz.timezone(zone)
     tz_dt = utc_dt.astimezone(tz)
     s = tz_dt.strftime(fmt) 

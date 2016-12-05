@@ -4,14 +4,17 @@
 #import GaussFit as gfit
 try:
   import numpy as np
+  import matplotlib
   import matplotlib.pyplot as pl
 except ImportError:
   print('No module found: numpy, matplotlib and scipy modules ' +
         'should be present to run pytimbertools')
-
+import os
+import shutil
 import glob
 import BinaryFileIO as bio
 import localdate as ld
+from statsmodels.nonparametric.smoothers_lowess import lowess
 
 class BSRTprofiles(object):
   """
@@ -52,7 +55,9 @@ class BSRTprofiles(object):
                 time_stamp : time stamp in unix time [ns]
                 pos : position [um]
                 amp : amplitude of profile [a.u.]
-              
+  Methods:
+  --------
+  plot_profile : plot profile for specific bunch and timestamp    
   """
   @staticmethod
   def read_header(r):
@@ -196,6 +201,19 @@ class BSRTprofiles(object):
       for k in prof.keys():
         prof[k] = np.array(prof[k], dtype=ftype)
     return cls(fn=fn, records=records, profiles=profiles)
+  def smooth_profile_stefania(self, slot = None, time_stamp = None, plane = 'h'):
+    mask = self.profiles[plane][slot]['time_stamp'] == time_stamp
+    profs = self.profiles[plane][slot][mask] # original profiles
+    profs_smooth = profs.copy() # new array with smoothened profile
+    for i in xrange(len(profs)):
+      x = profs[i]['pos']
+      y = profs[i]['amp']
+      # smooth profile with lowess method, values are already sorted
+      xs,ys = lowess(endog=y,exog=x,frac=0.1,it=3,delta=0,
+                     is_sorted=True,missing='drop',
+                     return_sorted=True).T 
+      # find x where y is max in order to define left and right side 
+      # of each distribution
   def plot_profile(self, slot = None, time_stamp = None, plane = 'h'):
     """
     Plot all profiles for specific bunch and time. Plot title displays 
@@ -207,6 +225,7 @@ class BSRTprofiles(object):
     time_stamp : time stamp in unix time
     plane : plane of profile, either 'h' or 'v'
     """
+    #select profile for slot and time stamp
     mask = self.profiles[plane][slot]['time_stamp'] == time_stamp
     profs = self.profiles[plane][slot][mask]
     for i in xrange(len(profs)):
@@ -216,3 +235,86 @@ class BSRTprofiles(object):
     ts = ld.dumpdate(t=time_stamp*1.e-9,fmt='%Y-%m-%d %H:%M:%S.SSS',
                      zone=ld.myzones['cern']) # convert ns -> s
     pl.gca().set_title('%s plane, %s'%(plane.upper(),ts))
+  def mk_profile_video(self, slot = None, plt_dir='BSRTprofile_gifs',
+                       export=False,verbose=False,delay=20):
+    """
+    Generates a video of the profiles of bunch with *slot*
+
+    Parameters:
+    -----------
+    slot : slot or list of slots of bunches. If slot = None all bunches
+           are selected. In case of several bunch, on video is 
+           generated per bunch
+    plt_dir : directory to save videos
+    export : If True do not delete png files
+    verbose : verbose option for additional output
+    delay : option for convert to define delay between pictures
+    """
+    tmpdir = os.path.join(plt_dir,'tmp_bsrtprofiles')
+    # dictionary to store failed profiles
+    profs_failed = {}
+    for plane in ['h','v']:
+      profs_failed[plane] = {}
+      pl.figure(plane,figsize=(8,8))
+      # select slots
+      # all bunches
+      if slot is None:
+        slots = self.profiles[plane].keys()
+      # if single bunch 
+      elif not hasattr(slot,"__iter__"):
+        slots = [slot]
+      for slot in slots:
+        if os.path.exists(tmpdir) == False:
+          os.makedirs(tmpdir)
+        profs_failed[plane][slot] = []
+        if verbose:
+          print('... generating plots for bunch %s'%slot)
+        profs = self.profiles[plane][slot]
+        pngcount = 0
+        if verbose: 
+          print( '... total number of profiles ' +
+                 str(len(set(profs['time_stamp']))) )
+        for time_stamp in np.sort(list(set(profs['time_stamp']))):
+          pl.clf()
+          mask = profs['time_stamp'] == time_stamp
+          profs_ts = profs[mask]
+          for i in xrange(len(profs_ts)):                                        
+            try: 
+              pl.plot(profs_ts[i]['pos'],profs_ts[i]['amp'],
+                      label='profile %s'%i)   
+            except ValueError:
+              if verbose: 
+                print('ERROR: plotting of bunch %s, '%(slot) +
+                'profile %s, time stamp %s failed.'%(i,time_stamp) +
+                ' len(x) =%s, len(y) = %s'%(len(profs_ts[i]['pos']),
+                 len(profs_ts[i]['amp'])))
+              profs_failed[plane][slot].append([time_stamp])
+              pass
+          pl.grid(b=True)                                                     
+          pl.legend(loc='best')                                               
+          # convert ns -> s before creating date string      
+          ts = ld.dumpdate(t=time_stamp*1.e-9,
+                   fmt='%Y-%m-%d %H:%M:%S.SSS',zone=ld.myzones['cern'])
+          pl.gca().set_title('bunch %s, %s plane, %s'%(slot, 
+                             plane.upper(),ts))               
+          fnpl = os.path.join(tmpdir,'bunch_%s_plane_%s_%05d.png'%(slot,
+                              plane,pngcount))
+          if verbose: print '... save png %s'%(fnpl)
+          pl.savefig(fnpl)
+          pngcount += 1
+        cmd="convert -delay %s %s %s"%(delay,
+             os.path.join(tmpdir,'bunch_%s_plane_%s_*.png'%(slot,plane)),
+             os.path.join(plt_dir,'bunch_%s_plane_%s.gif'%(slot,plane)))
+        os.system(cmd)
+        if verbose: print '... creating .gif file with convert'
+        # delte png files already
+        if export == False:
+          shutil.rmtree(tmpdir)
+    for plane in profs_failed.keys():
+      for slot in profs_failed[plane].keys():
+         if len(profs_failed[plane][slot])>0:
+            print('WARNING: plotting of profile failed for timestamps:')
+            ts = tuple(set(profs_failed[plane][slot]))
+            lts = len(ts)
+            print(('%s, '*lts)%ts)
+    if export == False: shutil.rmtree(tmpdir)
