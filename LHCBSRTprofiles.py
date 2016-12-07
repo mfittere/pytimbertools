@@ -12,9 +12,12 @@ except ImportError:
 import os
 import shutil
 import glob
+from statsmodels.nonparametric.smoothers_lowess import lowess
+from matplotlib import gridspec
+
 import BinaryFileIO as bio
 import localdate as ld
-from statsmodels.nonparametric.smoothers_lowess import lowess
+import toolbox as td
 
 class BSRTprofiles(object):
   """
@@ -99,13 +102,15 @@ class BSRTprofiles(object):
   def read_array_double(r, sz):
     return np.array(r.read_double(sz)[:sz])
 
-  def __init__(self, fn=None, records=None, profiles=None):
+  def __init__(self, fn=None, records=None, profiles=None,
+               profiles_stat=None):
     self.records   = records
     if self.records is None:
       self.filenames = None
     else:
       self.filenames = self.records.keys()
     self.profiles = profiles
+    self.profiles_stat = profiles_stat
 
   @classmethod
   def load_files(cls,files=None,verbose=False):
@@ -178,11 +183,25 @@ class BSRTprofiles(object):
               if slotID not in profiles[plane].keys():
                 profiles[plane][slotID]=[]
             for j in xrange(num_acq_per_bunch):
+              # h values go from -x to +x
               profiles['h'][slotID].append( (time_stamp, projPositionSet1,
                   np.array(profilesSet1[width*(i*num_bunches+j):
                                        width*(i*num_bunches+(j+1))],
                            dtype= np.float_)) )
-              profiles['v'][slotID].append( (time_stamp,projPositionSet2,
+              # v values go from x to -x
+              # -> reverse the order
+              if projPositionSet2[0] > projPositionSet2[-1]:
+                profiles['v'][slotID].append( (time_stamp,
+                  np.fliplr([projPositionSet2])[0],
+                  np.fliplr([np.array(
+                    profilesSet2[height*(i*num_bunches+j):
+                                 height*(i*num_bunches+(j+1))],
+                           dtype= np.float_)])[0]) )
+              # v values go from -x to x
+              # -> keep the order
+              else:
+                profiles['v'][slotID].append( (time_stamp,
+                  projPositionSet2,
                   np.array(profilesSet2[height*(i*num_bunches+j):
                                         height*(i*num_bunches+(j+1))],
                            dtype= np.float_)) )
@@ -201,20 +220,6 @@ class BSRTprofiles(object):
       for k in prof.keys():
         prof[k] = np.array(prof[k], dtype=ftype)
     return cls(fn=fn, records=records, profiles=profiles)
-  def smooth_profile_stefania(self, slot = None, time_stamp = None, plane = 'h'):
-    #select profile for slot and time stamp                             
-    profs = self.get_profile(slot=slot,time_stamp=time_stamp,
-                             plane=plane)
-    profs_smooth = profs.copy() # new array with smoothened profile
-    for i in xrange(len(profs)):
-      x = profs[i]['pos']
-      y = profs[i]['amp']
-      # smooth profile with lowess method, values are already sorted
-      xs,ys = lowess(endog=y,exog=x,frac=0.1,it=3,delta=0,
-                     is_sorted=True,missing='drop',
-                     return_sorted=True).T 
-      # find x where y is max in order to define left and right side 
-      # of each distribution
   def get_timestamps(self, slot = None, plane = 'h'):
     """
     get all time stamps in unix time [ns] for slot *slot* and
@@ -257,9 +262,36 @@ class BSRTprofiles(object):
           ' len(x) =%s, len(y) = %s'%(len(profs[i]['pos']),
            len(profs[i]['amp'])))
           pass
-    return profs 
-  def plot_profile(self, slot = None, time_stamp = None, plane = 'h',
-                   norm = True, verbose = False):
+    return profs
+  def get_profile_norm_avg(self, slot = None, time_stamp = None,
+                           plane = 'h'):                                    
+    """
+    returns averaged normalized profile for slot *slot*, time stamp
+    *time_stamp* as unix time [ns] and plane *plane*.
+    """
+    #select profile for slot and time stamp
+    profs = self.get_profile_norm(slot=slot,time_stamp=time_stamp,
+                                  plane=plane)
+    if len(profs) == 0:
+      raise ValueError('slot or timestamp not found')
+    # take the average over the profiles
+    # 1) check that x-axis are the same
+    check_x = 0
+    for i in xrange(len(profs)):
+      if (np.abs(profs[0]['pos']-profs[1]['pos'])).sum() != 0:
+        check_x +=1
+    #     check_x = 0 if x-axis of profiles are the same
+    #     check_x > 0 if x-axis differ
+    if check_x ==0: 
+      # 2) take the average. Integral is normalized to 1
+      #    -> to normalize avg divide by number of profiles
+      profs_avg = profs[0].copy() 
+      profs_avg['amp'] = profs['amp'].sum(axis=0)/len(profs)
+      return profs_avg
+    else:
+      return None
+  def _plot_profile(self, slot = None, time_stamp = None, plane = 'h',
+                    norm = True, verbose = False):
     """
     Plot all profiles for specific bunch and time. Plot title displays 
     'Europe/Zurich' time.
@@ -276,27 +308,44 @@ class BSRTprofiles(object):
                      so that:
                         int(norm_data) = 1
     verbose : verbose option for additional output
+
+    Returns:
+    --------
+    check_plot : bool, flag if profile plot failed
+                 (used for mk_profile_video)
     """
-    # list for failed timestamps (used for mk_profile_video)
-    profs_failed = False
+    # flag if profile plot failed (used for mk_profile_video)
+    check_plot = True
     #select profile for slot and time stamp
     if norm:
       profs = self.get_profile_norm(slot=slot,time_stamp=time_stamp,
                                     plane=plane)
+      profs_avg = self.get_profile_norm_avg(slot=slot,
+                          time_stamp=time_stamp,plane=plane)
     else:
       profs = self.get_profile(slot=slot,time_stamp=time_stamp,
                                plane=plane)
     for i in xrange(len(profs)):
       try:
-        pl.plot(profs[i]['pos'],profs[i]['amp'],label = 'profile %s'%i)
+        pl.plot(profs[i]['pos'],profs[i]['amp'],
+                label='profile %s'%(i+1))
       except ValueError:
         if verbose:
           print('ERROR: plotting of bunch %s, '%(slot) +
           'profile %s, time stamp %s failed.'%(i,time_stamp) +
-          ' len(x) =%s, len(y) = %s'%(len(profs_ts[i]['pos']),
-           len(profs_ts[i]['amp'])))
-          profs_failed = True
-          pass
+          ' len(x) =%s, len(y) = %s'%(len(profs[i]['pos']),
+           len(profs[i]['amp'])))
+        check_plot = False
+        pass
+    if norm and check_plot:
+      pl.plot(profs_avg['pos'],profs_avg['amp'],
+              label = 'average profile',color='k',linestyle='-')
+
+    pl.xlabel('position [mm]')
+    if norm:
+      pl.ylabel(r'probability (integral normalized to 1) [a.u.]')
+    else:
+      pl.ylabel('intensity [a.u.]')
     pl.grid(b=True)
     pl.legend(loc='best')
     # convert ns -> s before creating date string
@@ -304,8 +353,309 @@ class BSRTprofiles(object):
              fmt='%Y-%m-%d %H:%M:%S.SSS',zone='cern')
     pl.gca().set_title('bunch %s, %s plane, %s'%(slot,
                              plane.upper(),ts))
-    return profs_failed
-  def mk_profile_video(self, slot = None, plt_dir='BSRTprofile_gifs',
+    return check_plot
+  def plot_profile(self, slot = None, time_stamp = None, plane = 'h',
+                   verbose = False):
+    """
+    Plot raw data profiles for specific bunch and time. Plot title displays 
+    'Europe/Zurich' time.
+
+    Parameters:
+    -----------
+    slot : slot number
+    time_stamp : time stamp in unix time
+    plane : plane of profile, either 'h' or 'v'
+    verbose : verbose option for additional output
+    """
+    self._plot_profile(slot=slot,time_stamp=time_stamp,plane=plane,
+                       norm=False,verbose=verbose)
+  def plot_profile_norm(self, slot = None, time_stamp = None,
+                        plane = 'h', verbose = False):
+    """
+    Plot all profiles for specific bunch and time. Profiles are
+    normalized to represent a probability distribution, explicitly:
+      norm_data = raw_data/(int(raw_data))
+    so that:
+      int(norm_data) = 1
+    Plot title displays 'Europe/Zurich' time.
+
+    Parameters:
+    -----------
+    slot : slot number
+    time_stamp : time stamp in unix time
+    plane : plane of profile, either 'h' or 'v'
+    verbose : verbose option for additional output
+    """
+    self._plot_profile(slot=slot,time_stamp=time_stamp,plane=plane,
+                       norm=True,verbose=verbose)
+  def plot_cumsum(self, slot = None, time_stamp = None, plane = 'h',
+                  verbose = False):
+    """
+    Plot cumulative distribution function of normalized profiles for 
+    a specific bunch and time. Profiles are normalized to represent
+    a probability distribution, explicitly:
+      norm_data = raw_data/(int(raw_data)) 
+    so that:
+      int(norm_data) = 1
+    Plot title displays 'Europe/Zurich' time.
+
+    Parameters:
+    -----------
+    slot : slot number
+    time_stamp : time stamp in unix time
+    plane : plane of profile, either 'h' or 'v'
+    verbose : verbose option for additional output
+
+    Returns:
+    --------
+    check_plot : bool, flag if profile plot failed
+                 (used for mk_profile_video)
+    """
+    #select profile for slot and time stamp
+    profs = self.get_profile_norm(slot=slot,time_stamp=time_stamp,
+                                  plane=plane)
+    profs_avg = self.get_profile_norm_avg(slot=slot,
+                       time_stamp=time_stamp,plane=plane)
+    # flag if profile plot failed
+    check_plot = True
+    # individual profiles
+    for i in xrange(len(profs)):
+      try:
+        pl.plot(profs[i]['pos'],profs[i]['amp'].cumsum(),
+                label='profile %s'%(i+1))
+      except ValueError:
+        if verbose:
+          print('ERROR: plotting of bunch %s, '%(slot) +
+          'profile %s, time stamp %s failed.'%(i,time_stamp) +
+          ' len(x) =%s, len(y) = %s'%(len(profs[i]['pos']),
+           len(profs[i]['amp'])))
+        check_plot = False
+        pass
+    # average profile
+    if check_plot:
+      pl.plot(profs_avg['pos'],profs_avg['amp'].cumsum(),
+            label = 'average profile',color='k',linestyle='-')
+      pl.xlabel('position [mm]')
+      pl.ylabel(r'cumulative distribution functions [a.u.]')
+      pl.grid(b=True)
+      pl.legend(loc='best')
+      # convert ns -> s before creating date string
+      ts = ld.dumpdate(t=time_stamp*1.e-9,
+                       fmt='%Y-%m-%d %H:%M:%S.SSS',zone='cern')
+      pl.gca().set_title('bunch %s, %s plane, %s'%(slot,
+                          plane.upper(),ts))
+    return check_plot
+  def plot_residual(self, slot = None, time_stamp = None, 
+                    time_stamp_ref = None, plane = 'h',
+                    verbose = False):
+    """
+    Plot residual of normalized profiles for a specific bunch and time.
+    Plot title displays 'Europe/Zurich' time.
+
+    Parameters:
+    -----------
+    slot : slot number
+    time_stamp : time stamp in unix time [ns]
+    time_stamp_ref : reference time stamp in unix time [ns], if None
+                     use first time stamp
+    plane : plane of profile, either 'h' or 'v'
+    verbose : verbose option for additional output
+    """
+    self._plot_residual_ratio(flag='residual', flagprof='all', slot=slot,
+            time_stamp=time_stamp, time_stamp_ref=time_stamp_ref,
+            plane=plane, verbose=verbose)
+  def plot_ratio(self, slot = None, time_stamp = None, 
+                 time_stamp_ref = None, plane = 'h',
+                 verbose = False):
+    """
+    Plot ratio of normalized profiles for a specific bunch and time.
+    Plot title displays 'Europe/Zurich' time.
+
+    Parameters:
+    -----------
+    slot : slot number
+    time_stamp : time stamp in unix time [ns]
+    time_stamp_ref : reference time stamp in unix time [ns], if None    
+                     use first time stamp                               
+    plane : plane of profile, either 'h' or 'v'
+    verbose : verbose option for additional output
+    """
+    self._plot_residual_ratio(flag='ratio', flagprof = 'all',slot=slot,
+            time_stamp=time_stamp, time_stamp_ref=time_stamp_ref,
+            plane=plane, verbose=verbose)
+  def _plot_residual_ratio(self, flag, flagprof, slot = None,
+                           time_stamp = None, time_stamp_ref = None, 
+                           plane = 'h', verbose = False):
+    """
+    Plot residual or ratio of normalized profiles for a specific bunch and time.
+    Plot title displays 'Europe/Zurich' time.
+
+    Parameters:
+    -----------
+    flag : flag = 'residual' plot the residual
+           flag = 'ratio' plot the ratio
+    flagprof: flagprof = 'all' plot all profiles + average
+              flagprof = 'avg' plot only average profile
+    slot : slot number
+    time_stamp : time stamp in unix time [ns]
+    time_stamp_ref : reference time stamp in unix time [ns], if None
+                     use first time stamp
+    plane : plane of profile, either 'h' or 'v'
+    verbose : verbose option for additional output
+
+    Returns:
+    --------
+    check_plot : bool, flag if profile plot failed 
+                 (used for mk_profile_video)
+    """
+    # if time_stamp_ref = None use first timestamp
+    if time_stamp_ref is None:
+      time_stamp_ref = self.get_timestamps(slot=slot,plane=plane)[0]
+    # select profile for slot and time stamp
+    # individual profiles
+    if flagprof == 'all':
+      profs         = self.get_profile_norm(slot=slot,
+                             time_stamp=time_stamp, plane=plane)
+      profs_ref     = self.get_profile_norm(slot=slot,
+                             time_stamp=time_stamp_ref, plane=plane)
+    # average profiles
+    profs_avg     = self.get_profile_norm_avg(slot=slot,
+                           time_stamp=time_stamp, plane=plane)
+    profs_ref_avg = self.get_profile_norm_avg(slot=slot,
+                           time_stamp=time_stamp_ref, plane=plane)
+    # take only values for which x-range of profile coincides
+    xval = list(set(profs_avg['pos']) and set(profs_ref_avg['pos']))
+    mask = np.array([ pos in xval for pos in profs_avg['pos'] ],
+                    dtype=bool)
+    mask_ref = np.array([ pos in xval for pos in profs_ref_avg['pos'] ],
+                        dtype=bool)
+    # individual profiles
+    # check_plot = flag if profile plot failed
+    check_plot = True
+    if flagprof == 'all':
+      for i in xrange(len(profs)):
+        try:
+          if flag == 'residual':
+            pl.plot(profs[i]['pos'][mask],
+                    profs[i]['amp'][mask]-profs_ref[i]['amp'][mask_ref],
+                    label='profile %s'%(i+1))
+          if flag == 'ratio':
+            pl.plot(profs[i]['pos'][mask],
+                    profs[i]['amp'][mask]/profs_ref[i]['amp'][mask_ref],
+                    label='profile %s'%(i+1))
+        except ValueError:
+          if verbose:
+            print('ERROR: plotting of bunch %s, '%(slot) +
+            'profile %s, time stamp %s failed.'%(i,time_stamp) +
+            ' len(x) =%s, len(y) = %s'%(len(profs[i]['pos']),
+             len(profs[i]['amp'])))
+          check_plot = False
+          pass
+    #  average profile
+    if flag == 'residual':
+      try:
+        pl.plot(profs_avg['pos'][mask],
+                profs_avg['amp'][mask]-profs_ref_avg['amp'][mask_ref],
+                label = 'average profile',color='k',linestyle='-')
+      except (ValueError,IndexError):
+        check_plot = False
+        pass
+    if flag == 'ratio':
+      try:
+        pl.plot(profs_avg['pos'][mask],
+                profs_avg['amp'][mask]/profs_ref_avg['amp'][mask_ref],
+                label = 'average profile',color='k',linestyle='-')
+      except (ValueError,IndexError):
+        check_plot = False
+        pass
+    if check_plot:
+      pl.xlabel('position [mm]')
+      if flag == 'residual':
+        pl.ylabel(r'residual $A-A_{\mathrm{ref}}$ [a.u.]')
+      if flag == 'ratio':
+        pl.ylabel(r'ratio $A/A_{\mathrm{ref}}$ [a.u.]')
+      pl.grid(b=True)
+      pl.legend(loc='best')
+      # convert ns -> s before creating date string
+      ts = ld.dumpdate(t=time_stamp*1.e-9,
+               fmt='%Y-%m-%d %H:%M:%S.SSS',zone='cern')
+      pl.gca().set_title('bunch %s, %s plane, %s'%(slot,
+                               plane.upper(),ts))
+    return check_plot
+  def plot_all(self,slot = None, time_stamp = None,
+               time_stamp_ref = None, plane = 'h', norm = True, 
+               verbose = False):
+    """
+    plot normalized or raw data profiles, cumulative distribution 
+    function, residual and ratio in respect to reference distribution
+
+    Parameters:
+    -----------
+    slot : slot number
+    time_stamp : time stamp in unix time [ns]
+    time_stamp_ref : reference time stamp in unix time [ns], if None
+                     use first time stamp
+    plane : plane of profile, either 'h' or 'v'
+    norm : if norm = False raw profiles are plotted
+           if norm = True profiles are normalized to represent a 
+                     probability distribution, explicitly:
+                        norm_data = raw_data/(int(raw_data))
+                     so that:
+                        int(norm_data) = 1
+    verbose : verbose option for additional output
+    
+    Returns:
+    --------
+    flaux : bool, flag to check if profile plots have failed
+    """
+    pl.clf()
+    fig = pl.gcf()
+    nsub = 4 # number of subplots
+    for i in xrange(nsub):
+      fig.add_subplot(2,2,i+1)
+    ts = ld.dumpdate(t=time_stamp*1.e-9,
+             fmt='%Y-%m-%d %H:%M:%S.SSS',zone='cern')
+    pl.suptitle('bunch %s, %s plane, %s'%(slot,
+                             plane.upper(),ts))
+    # 1) profile plot
+    pl.subplot(223)
+    # flaux = flag for checking if profile plots have failed
+    flaux = self._plot_profile(slot=slot,time_stamp=time_stamp,
+                              plane=plane,norm=norm,verbose=verbose)
+    if norm:
+      pl.gca().set_ylabel('probability [a.u.]')
+      pl.gca().set_ylim(-0.02,0.32)
+    # 2) cumulative sum
+    pl.subplot(224)
+    self.plot_cumsum(slot=slot,time_stamp=time_stamp,plane=plane,
+                     verbose=verbose)
+    pl.gca().set_ylabel('cumulative dist. [a.u.]')
+    pl.gca().set_ylim(-1,25)
+#     3) residual, only average profile
+    pl.subplot(221)
+    self._plot_residual_ratio(flag='residual', flagprof='avg', 
+           slot=slot, time_stamp=time_stamp,
+           time_stamp_ref=time_stamp_ref, plane=plane, verbose=verbose)
+    pl.gca().set_ylim(-0.05,0.05)
+#     4) ratio
+    pl.subplot(222)
+    self._plot_residual_ratio(flag='ratio', flagprof='avg', 
+           slot=slot, time_stamp=time_stamp,
+           time_stamp_ref=time_stamp_ref, plane=plane, verbose=verbose)
+    pl.gca().set_ylim(-1,6)
+    # remove subplot titles, shring legend size and put it on top of
+    # the subplot
+    for i in xrange(4):
+      pl.subplot(2,2,i+1)
+      pl.gca().set_title('')
+      pl.gca().legend(bbox_to_anchor=(0., 1.02, 1., .102), loc=3,
+                    ncol=2, mode="expand", borderaxespad=0.,
+                    fontsize=10)
+      pl.gca().set_xlim(-8,8)
+    fig.subplots_adjust(top=0.5)
+    fig.tight_layout()
+    return flaux
+  def mk_profile_video(self, slot = None, time_stamp_ref=None,plt_dir='BSRTprofile_gifs',
                        delay=20, norm = True, export=False, 
                        verbose=False):
     """
@@ -329,21 +679,22 @@ class BSRTprofiles(object):
     """
     tmpdir = os.path.join(plt_dir,'tmp_bsrtprofiles')
     # dictionary to store failed profiles
-    profs_failed = {}
+    check_plot = {}
     for plane in ['h','v']:
       # set slot and plane, initialize variables
-      profs_failed[plane] = {}
-      pl.figure(plane,figsize=(8,8))
-      # all bunches
+      check_plot[plane] = {}
+      # 1) all bunches
       if slot is None:
         slots = self.profiles[plane].keys()
-      # if single bunch 
+      # 2) if single bunch 
       elif not hasattr(slot,"__iter__"):
         slots = [slot]
+      # generate the figure and subplot
+      pl.figure(plane)
       for slot in slots:
         if os.path.exists(tmpdir) == False:
           os.makedirs(tmpdir)
-        profs_failed[plane][slot] = []
+        check_plot[plane][slot] = []
         if verbose:
           print('... generating plots for bunch %s'%slot)
         time_stamps = self.get_timestamps(slot=slot,plane=plane)
@@ -353,11 +704,11 @@ class BSRTprofiles(object):
         # generate png of profiles for each timestamps
         for time_stamp in time_stamps:
           pl.clf()
-          # 1) profile plot
-          flaux = self.plot_profile(slot=slot,time_stamp=time_stamp,
-                                    plane=plane)
-          # if plot failed, flaux = True -> append t profs_failed
-          if flaux: profs_failed[plane][slot].append(time_stamp)
+          flaux = self.plot_all(slot=slot,time_stamp=time_stamp,
+                                time_stamp_ref=time_stamp_ref,
+                                plane=plane,norm=norm)
+          # if plot failed, flaux = False -> append t check_plot
+          if flaux is False: check_plot[plane][slot].append(time_stamp)
           fnpl = os.path.join(tmpdir,'bunch_%s_plane_%s_%05d.png'%(slot,
                               plane,pngcount))
           if verbose: print '... save png %s'%(fnpl)
@@ -369,16 +720,18 @@ class BSRTprofiles(object):
              os.path.join(tmpdir,'bunch_%s_plane_%s_*.png'%(slot,plane)),
              os.path.join(plt_dir,'bunch_%s_plane_%s.gif'%(slot,plane)))
         os.system(cmd)
-        # delte png files already
+        # delete png files already
         if (export is False) and (os.path.exists(tmpdir) is True):
           shutil.rmtree(tmpdir)
+        pl.figure(plane)
+        pl.close()
     # print a warning for all failed plots
-    for plane in profs_failed.keys():
-      for slot in profs_failed[plane].keys():
-         if len(profs_failed[plane][slot])>0:
+    for plane in check_plot.keys():
+      for slot in check_plot[plane].keys():
+         if len(check_plot[plane][slot])>0:
             print('WARNING: plotting of profiles for plane %s'%(plane) +
-            'and slot %s failed for timestamps:'%(slot))
-            ts = tuple(set(profs_failed[plane][slot]))
+            ' and slot %s failed for timestamps:'%(slot))
+            ts = tuple(set(check_plot[plane][slot]))
             lts = len(ts)
             print(('%s, '*lts)%ts)
     # delete temporary directory
