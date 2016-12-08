@@ -6,6 +6,7 @@ try:
   import numpy as np
   import matplotlib
   import matplotlib.pyplot as pl
+  from scipy.optimize import curve_fit
 except ImportError:
   print('No module found: numpy, matplotlib and scipy modules ' +
         'should be present to run pytimbertools')
@@ -102,7 +103,7 @@ class BSRTprofiles(object):
   def read_array_double(r, sz):
     return np.array(r.read_double(sz)[:sz])
 
-  def __init__(self, fn=None, records=None, profiles=None,
+  def __init__(self, records=None, profiles=None,
                profiles_stat=None):
     self.records   = records
     if self.records is None:
@@ -183,28 +184,72 @@ class BSRTprofiles(object):
               if slotID not in profiles[plane].keys():
                 profiles[plane][slotID]=[]
             for j in xrange(num_acq_per_bunch):
-              # h values go from -x to +x
-              profiles['h'][slotID].append( (time_stamp, projPositionSet1,
-                  np.array(profilesSet1[width*(i*num_bunches+j):
-                                       width*(i*num_bunches+(j+1))],
-                           dtype= np.float_)) )
-              # v values go from x to -x
-              # -> reverse the order
-              if projPositionSet2[0] > projPositionSet2[-1]:
-                profiles['v'][slotID].append( (time_stamp,
-                  np.fliplr([projPositionSet2])[0],
-                  np.fliplr([np.array(
-                    profilesSet2[height*(i*num_bunches+j):
-                                 height*(i*num_bunches+(j+1))],
-                           dtype= np.float_)])[0]) )
-              # v values go from -x to x
-              # -> keep the order
+              # check the data
+              # h plane
+              if len(projPositionSet1) == 0:
+                check_data = False
+                print("WARNING: len(projPositionSet1) = 0 for " +
+                      "slotID %s, timestamp %s! "%(slotID,time_stamp) + 
+                      "Data is discarded (both *Set1 and *Set2)!")
+              elif (len(profilesSet1[width*(i*num_bunches+j):
+                         width*(i*num_bunches+(j+1))]) == 0):
+                check_data = False
+                print("WARNING: len(profilesSet1[...]) = 0 for " +
+                      "slotID %s, timestamp %s! "%(slotID,time_stamp) +
+                      " Data is discarded (both *Set1 and *Set2)!")
+              elif (len(projPositionSet1)!=
+                     len(profilesSet1[width*(i*num_bunches+j):
+                           width*(i*num_bunches+(j+1))])):
+                print("WARNING: len(projPositionSet1) != " + 
+                      "len(profilesSet1[...]) for " +
+                      "slotID %s, timestamp %s! "%(slotID,time_stamp) +
+                      "Data is discarded (both *Set1 and *Set2)!")
+                check_data = False
+              # v plane
+              if len(projPositionSet2) == 0:
+                check_data = False
+                print("WARNING: len(projPositionSet2) = 0 for " +
+                      "slotID %s, timestamp %s! "%(slotID,time_stamp) + 
+                      "Data is discarded (both *Set1 and *Set2)!")
+              elif (len(profilesSet2[height*(i*num_bunches+j):
+                         height*(i*num_bunches+(j+1))]) == 0):
+                check_data = False
+                print("WARNING: len(profilesSet2[...]) = 0 for " +
+                      "slotID %s, timestamp %s! "%(slotID,time_stamp) +
+                      " Data is discarded (both *Set1 and *Set2)!")
+              elif (len(projPositionSet2)!=
+                     len(profilesSet2[height*(i*num_bunches+j):
+                           height*(i*num_bunches+(j+1))])):
+                print("WARNING: len(projPositionSet2) != " + 
+                      "len(profilesSet2[...]) for " +
+                      "slotID %s, timestamp %s! "%(slotID,time_stamp) +
+                      "Data is discarded (both *Set1 and *Set2)!")
+                check_data = False
               else:
-                profiles['v'][slotID].append( (time_stamp,
-                  projPositionSet2,
-                  np.array(profilesSet2[height*(i*num_bunches+j):
-                                        height*(i*num_bunches+(j+1))],
-                           dtype= np.float_)) )
+                check_data = True
+              if check_data:
+                # h values go from -x to +x
+                profiles['h'][slotID].append( (time_stamp, projPositionSet1,
+                    np.array(profilesSet1[width*(i*num_bunches+j):
+                                         width*(i*num_bunches+(j+1))],
+                             dtype= np.float_)) )
+                # v values go from x to -x
+                # -> reverse the order
+                if projPositionSet2[0] > projPositionSet2[-1]:
+                  profiles['v'][slotID].append( (time_stamp,
+                    np.fliplr([projPositionSet2])[0],
+                    np.fliplr([np.array(
+                      profilesSet2[height*(i*num_bunches+j):
+                                   height*(i*num_bunches+(j+1))],
+                             dtype= np.float_)])[0]) )
+                # v values go from -x to x
+                # -> keep the order
+                else:
+                  profiles['v'][slotID].append( (time_stamp,
+                    projPositionSet2,
+                    np.array(profilesSet2[height*(i*num_bunches+j):
+                                          height*(i*num_bunches+(j+1))],
+                             dtype= np.float_)) )
           # check the file position
           if r.tell() != offset:
             raise ValueError('wrong file position %s != '%(r.tell()) +
@@ -219,7 +264,75 @@ class BSRTprofiles(object):
       prof = profiles[plane]
       for k in prof.keys():
         prof[k] = np.array(prof[k], dtype=ftype)
-    return cls(fn=fn, records=records, profiles=profiles)
+    return cls(records=records, profiles=profiles)
+  def clean_data(self,stdamp = 3000):
+    """
+    removes all profiles considered to be just noise, explicitly
+    profiles with:
+    1) std(self.profiles[plane][slot]['amp']) < stdamp
+    """
+    for plane in 'h','v':
+      for slot in self.profiles[plane].keys():
+        # delete all entries with std(profs['amp']) < stdamp)
+        rm_ts_std = []
+        for i in xrange(len(self.profiles[plane][slot])):
+          std_aux = (self.profiles[plane][slot][i]['amp']).std()
+          if std_aux < stdamp:
+            rm_ts_std.append(self.profiles[plane][slot][i]['time_stamp'])
+        rm_ts = list(set(rm_ts_std))
+        for ts in rm_ts:
+          print("... removing entry for plane %s, "%(plane) +
+                "slot %s, time stamp "%(slot) +
+                "%s"%(self.profiles[plane][slot][i]['time_stamp']))
+        rm_mask = np.in1d(self.profiles[plane][slot]['time_stamp'],
+                          rm_ts,invert=True)
+        self.profiles[plane][slot] = self.profiles[plane][slot][rm_mask]
+    return self
+  def stats(self):
+    """
+    calculate statistical parameters for the average over all profiles
+    for each timestamp.
+    """
+    self.profiles_stat={}
+    for plane in ['h','v']:
+      self.profiles_stat[plane]={}
+      for slot in self.profiles[plane].keys():
+        for time_stamp in self.get_timestamps(slot=slot, plane=plane):
+          # average profile
+          profs_avg = self.get_profile_norm_avg(slot=slot,                  
+                             time_stamp=time_stamp, plane=plane)            
+          # 1) estimate centroid with three different methods:
+          # 1a) Gaussian fit (cent_gauss)
+          # 1b) center of gravity sum(x*w) (cent_stat)
+          # 1c) median (cent_stat_median)
+          # 1d) 50 % of cummulative sum (cent_cumsum)
+          # 2) estimate of distribution width with three different 
+          #    methods:
+          # 2a) Gaussian fit (sigma_gauss)
+          # 2b) statistical rms sum(x*w) (sigma_stat)
+          # 2c) median absolute deviation = median(|x-median(x)|)
+          # 2d) 26 % and 84% of cummulative sum (sigma_cumsum)
+
+          # a) Gaussian fit
+          # assume initial values of
+          # mean0=0,sigma0=2,a0=1/sqrt(2*sigma0**2*pi)=0.2
+          p,pcov = curve_fit(toolbox.gauss_fit,profs_avg['pos'],
+                             profs_avg['amp'],p0=[0.2,0,2])
+          # error on p
+          psig = [ np.sqrt(pcov[i,i]) for i in range(len(p)) ]
+          cent_gauss, sigma_gauss = p[1],p[2]
+          cent_gauss_err, sigma_gauss_err = psig[1],psig[2]
+
+          # b) statistical parameters
+          cent_stat = np.average(profs_avg['pos'],
+                                 weights=profs_avg['amp'])
+          sigma_stat = np.average((profs_avg['pos']-cent_stat)**2,
+                                weights=profs_avg['amp'])
+          cent_stat_median = np.average(profs_avg['pos'],
+                                 weights=profs_avg['amp'])
+          sigma_stat_median = np.average((profs_avg['pos']-cent_stat)**2,
+                                weights=profs_avg['amp'])
+#        self.profiles_stat[plane][slot]=
   def get_timestamps(self, slot = None, plane = 'h'):
     """
     get all time stamps in unix time [ns] for slot *slot* and
@@ -271,9 +384,15 @@ class BSRTprofiles(object):
     """
     #select profile for slot and time stamp
     profs = self.get_profile_norm(slot=slot,time_stamp=time_stamp,
-                                  plane=plane)
+                                 plane=plane)
+    # no profiles found
     if len(profs) == 0:
       raise ValueError('slot or timestamp not found')
+    # one profile
+    if len(profs) == 1:
+      profs_avg = profs[0].copy()
+      return profs_avg
+    # more than one profile
     # take the average over the profiles
     # 1) check that x-axis are the same
     check_x = 0
@@ -622,9 +741,10 @@ class BSRTprofiles(object):
     # flaux = flag for checking if profile plots have failed
     flaux = self._plot_profile(slot=slot,time_stamp=time_stamp,
                               plane=plane,norm=norm,verbose=verbose)
+    pl.gca().set_yscale('log')
     if norm:
       pl.gca().set_ylabel('probability [a.u.]')
-      pl.gca().set_ylim(-0.02,0.32)
+      pl.gca().set_ylim(1.e-5,0.32)
     # 2) cumulative sum
     pl.subplot(224)
     self.plot_cumsum(slot=slot,time_stamp=time_stamp,plane=plane,
