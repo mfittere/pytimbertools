@@ -327,7 +327,7 @@ class BSRTprofiles(object):
           # assume initial values of
           # mean0=0,sigma0=2,a0=1/sqrt(2*sigma0**2*pi)=0.2
           try:
-            p,pcov = curve_fit(tb.gauss_fit,profs_norm_avg['pos'],
+            p,pcov = curve_fit(tb.gauss_pdf,profs_norm_avg['pos'],
                                profs_norm_avg['amp'],p0=[0,2])
             # error on p
             psig = [ np.sqrt(pcov[i,i]) for i in range(len(p)) ]
@@ -482,9 +482,9 @@ class BSRTprofiles(object):
       profs_avg = self.get_profile_norm_avg(slot=slot,
                           time_stamp=time_stamp,plane=plane)
       if self.profiles_stat is not None:
-        stat_aux = self.get_profiles_stat(slot=slot,
+        stat_aux = self.get_profile_stat(slot=slot,
                      time_stamp=time_stamp,plane=plane)
-        centroid_gauss = stat_aux['centroid_gauss']
+        cent_gauss = stat_aux['cent_gauss']
         sigma_gauss    = stat_aux['sigma_gauss']
     # raw data profile
     else:
@@ -493,12 +493,14 @@ class BSRTprofiles(object):
     for i in xrange(len(profs)):
       try:
         pl.plot(profs[i]['pos'],profs[i]['amp'],
-                label='profile %s'%(i+1))
+                label='profile %s'%(i+1),linestyle='-')
         if norm:
           # plot Gaussian fit in addition
-          pl.plot(profs[i]['pos'],tb.gauss_fit(profs[i]['pos'],
-                  centroid_gauss,sigma_gauss),color='gray',linestyle='--')
+          pl.plot(profs[i]['pos'],tb.gauss_pdf(profs[i]['pos'],
+                  cent_gauss,sigma_gauss),color='gray',linestyle='--',
+                  label='Gaussian fit')
           pl.ylabel(r'probability (integral normalized to 1) [a.u.]')
+          pl.ylim(5.e-4,0.5)
         else:
           pl.ylabel('intensity [a.u.]')
         pl.xlabel('position [mm]')
@@ -519,7 +521,7 @@ class BSRTprofiles(object):
         pass
     if norm and check_plot:
       pl.plot(profs_avg['pos'],profs_avg['amp'],
-              label = 'average profile',color='k',linestyle='--')
+              label = 'average profile',color='k',linestyle='-')
 
     return check_plot
   def plot_profile(self, slot = None, time_stamp = None, plane = 'h',
@@ -584,12 +586,18 @@ class BSRTprofiles(object):
                                   plane=plane)
     profs_avg = self.get_profile_norm_avg(slot=slot,
                        time_stamp=time_stamp,plane=plane)
+    if self.profiles_stat is not None:
+      stat_aux = self.get_profile_stat(slot=slot,
+                   time_stamp=time_stamp,plane=plane)
+      cent_gauss = stat_aux['cent_gauss']
+      sigma_gauss    = stat_aux['sigma_gauss']
     # flag if profile plot failed
     check_plot = True
     # individual profiles
     for i in xrange(len(profs)):
       try:
-        pl.plot(profs[i]['pos'],profs[i]['amp'].cumsum(),
+        dx = profs[i]['pos'][1]-profs[i]['pos'][0]
+        pl.plot(profs[i]['pos'],(dx*profs[i]['amp']).cumsum(),
                 label='profile %s'%(i+1))
       except ValueError:
         if verbose:
@@ -601,10 +609,15 @@ class BSRTprofiles(object):
         pass
     # average profile
     if check_plot:
-      pl.plot(profs_avg['pos'],profs_avg['amp'].cumsum(),
+      dx = profs[i]['pos'][1]-profs[i]['pos'][0]
+      pl.plot(profs_avg['pos'],(dx*profs_avg['amp']).cumsum(),
             label = 'average profile',color='k',linestyle='-')
+      pl.plot(profs_avg['pos'],tb.gauss_cdf(profs_avg['pos'],cent_gauss,
+              sigma_gauss),label = 'Gaussian fit', color = 'gray',
+              linestyle = '--')
       pl.xlabel('position [mm]')
       pl.ylabel(r'cumulative distribution functions [a.u.]')
+      pl.ylim(-0.05,1.05)
       pl.grid(b=True)
       pl.legend(loc='best')
       # convert ns -> s before creating date string
@@ -793,13 +806,11 @@ class BSRTprofiles(object):
     pl.gca().set_yscale('log')
     if norm:
       pl.gca().set_ylabel('probability [a.u.]')
-      pl.gca().set_ylim(1.e-5,0.32)
     # 2) cumulative sum
     pl.subplot(224)
     self.plot_cumsum(slot=slot,time_stamp=time_stamp,plane=plane,
                      verbose=verbose)
     pl.gca().set_ylabel('cumulative dist. [a.u.]')
-    pl.gca().set_ylim(-1,25)
 #     3) residual, only average profile
     pl.subplot(221)
     self._plot_residual_ratio(flag='residual', flagprof='avg', 
