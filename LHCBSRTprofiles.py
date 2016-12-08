@@ -18,7 +18,7 @@ from matplotlib import gridspec
 
 import BinaryFileIO as bio
 import localdate as ld
-import toolbox as td
+import toolbox as tb
 
 class BSRTprofiles(object):
   """
@@ -29,7 +29,10 @@ class BSRTprofiles(object):
   Load profiles from list of files (see BSRTprofiles.load_files for 
   details):
     BSRTprofiles.load_files(files='/myprofiledir/*.bindata')
-  
+  Load profiles from list (load_files), discard noisy profiles 
+  (clean_data), calculate statistical parameters (stats):
+    (BSRTprofiles.load_files(files='/myprofiledir/*.bindata')
+      .clean_data().stats()
   Attributes:
   -----------
   records : dictionary containing binary file information with the 
@@ -288,18 +291,25 @@ class BSRTprofiles(object):
                           rm_ts,invert=True)
         self.profiles[plane][slot] = self.profiles[plane][slot][rm_mask]
     return self
-  def stats(self):
+  def stats(self,verbose=False):
     """
     calculate statistical parameters for the average over all profiles
     for each timestamp.
     """
+    if verbose:
+      if self.profile_stat is None:
+        print('... calculate statistical parameters')
+      else:
+        print('... delete old data and recalculate statistical ' + 
+            'parameters')
     self.profiles_stat={}
     for plane in ['h','v']:
       self.profiles_stat[plane]={}
       for slot in self.profiles[plane].keys():
+        self.profiles_stat[plane][slot] = []
         for time_stamp in self.get_timestamps(slot=slot, plane=plane):
           # average profile
-          profs_avg = self.get_profile_norm_avg(slot=slot,                  
+          profs_norm_avg = self.get_profile_norm_avg(slot=slot,                  
                              time_stamp=time_stamp, plane=plane)            
           # 1) estimate centroid with three different methods:
           # 1a) Gaussian fit (cent_gauss)
@@ -316,23 +326,45 @@ class BSRTprofiles(object):
           # a) Gaussian fit
           # assume initial values of
           # mean0=0,sigma0=2,a0=1/sqrt(2*sigma0**2*pi)=0.2
-          p,pcov = curve_fit(toolbox.gauss_fit,profs_avg['pos'],
-                             profs_avg['amp'],p0=[0.2,0,2])
-          # error on p
-          psig = [ np.sqrt(pcov[i,i]) for i in range(len(p)) ]
-          cent_gauss, sigma_gauss = p[1],p[2]
-          cent_gauss_err, sigma_gauss_err = psig[1],psig[2]
-
+          try:
+            p,pcov = curve_fit(tb.gauss_fit,profs_norm_avg['pos'],
+                               profs_norm_avg['amp'],p0=[0,2])
+            # error on p
+            psig = [ np.sqrt(pcov[i,i]) for i in range(len(p)) ]
+            cent_gauss, sigma_gauss = p[0],p[1]
+            cent_gauss_err, sigma_gauss_err = psig[0],psig[1]
+          except RuntimeError:
+            if verbose:
+              print("WARNING: fit failed for plane %s, "%(plane) +
+                    "slotID %s, timestamp %s"%(slot,time_stamp))
+            cent_gauss, sigma_gauss = 0,0
+            cent_gauss_err, sigma_gauss_err = 0,0
+            pass
           # b) statistical parameters
-          cent_stat = np.average(profs_avg['pos'],
-                                 weights=profs_avg['amp'])
-          sigma_stat = np.average((profs_avg['pos']-cent_stat)**2,
-                                weights=profs_avg['amp'])
-          cent_stat_median = np.average(profs_avg['pos'],
-                                 weights=profs_avg['amp'])
-          sigma_stat_median = np.average((profs_avg['pos']-cent_stat)**2,
-                                weights=profs_avg['amp'])
-#        self.profiles_stat[plane][slot]=
+          cent_stat = np.average(profs_norm_avg['pos'],
+                                 weights=profs_norm_avg['amp'])
+          sigma_stat = np.average((profs_norm_avg['pos']-cent_stat)**2,
+                                weights=profs_norm_avg['amp'])
+          cent_stat_median = np.average(profs_norm_avg['pos'],
+                                 weights=profs_norm_avg['amp'])
+          sigma_stat_median = np.average((profs_norm_avg['pos']
+                                -cent_stat)**2,
+                                weights=profs_norm_avg['amp'])
+          #print 'append slot %s'%slot
+          self.profiles_stat[plane][slot].append((time_stamp,cent_gauss,
+            cent_gauss_err,cent_stat,cent_stat_median,sigma_gauss,
+            sigma_gauss_err,sigma_stat,sigma_stat_median))
+    # convert to a structured array
+    ftype=[('time_stamp',int), ('cent_gauss',float), 
+      ('cent_gauss_err',float), ('cent_stat',float), 
+      ('cent_stat_median',float), ('sigma_gauss',float),
+      ('sigma_gauss_err',float), ('sigma_stat',float),
+      ('sigma_stat_median',float)]
+    for plane in ['h','v']:
+      for k in self.profiles_stat[plane].keys():
+        self.profiles_stat[plane][k] = np.array(
+          self.profiles_stat[plane][k], dtype=ftype)
+    return self
   def get_timestamps(self, slot = None, plane = 'h'):
     """
     get all time stamps in unix time [ns] for slot *slot* and
@@ -409,6 +441,13 @@ class BSRTprofiles(object):
       return profs_avg
     else:
       return None
+  def get_profile_stat(self, slot = None, time_stamp = None, plane = 'h'):
+    """
+    get profile data for slot *slot*, time stamp *time_stamp* as
+    unix time [ns] and plane *plane*
+    """
+    mask = self.profiles_stat[plane][slot]['time_stamp'] == time_stamp
+    return self.profiles_stat[plane][slot][mask]
   def _plot_profile(self, slot = None, time_stamp = None, plane = 'h',
                     norm = True, verbose = False):
     """
@@ -435,12 +474,19 @@ class BSRTprofiles(object):
     """
     # flag if profile plot failed (used for mk_profile_video)
     check_plot = True
-    #select profile for slot and time stamp
+    # select profile for slot and time stamp
+    # normalized profiles
     if norm:
       profs = self.get_profile_norm(slot=slot,time_stamp=time_stamp,
                                     plane=plane)
       profs_avg = self.get_profile_norm_avg(slot=slot,
                           time_stamp=time_stamp,plane=plane)
+      if self.profiles_stat is not None:
+        stat_aux = self.get_profiles_stat(slot=slot,
+                     time_stamp=time_stamp,plane=plane)
+        centroid_gauss = stat_aux['centroid_gauss']
+        sigma_gauss    = stat_aux['sigma_gauss']
+    # raw data profile
     else:
       profs = self.get_profile(slot=slot,time_stamp=time_stamp,
                                plane=plane)
@@ -448,6 +494,21 @@ class BSRTprofiles(object):
       try:
         pl.plot(profs[i]['pos'],profs[i]['amp'],
                 label='profile %s'%(i+1))
+        if norm:
+          # plot Gaussian fit in addition
+          pl.plot(profs[i]['pos'],tb.gauss_fit(profs[i]['pos'],
+                  centroid_gauss,sigma_gauss),color='gray',linestyle='--')
+          pl.ylabel(r'probability (integral normalized to 1) [a.u.]')
+        else:
+          pl.ylabel('intensity [a.u.]')
+        pl.xlabel('position [mm]')
+        pl.grid(b=True)
+        pl.legend(loc='best')
+        # convert ns -> s before creating date string
+        ts = ld.dumpdate(t=time_stamp*1.e-9,
+                 fmt='%Y-%m-%d %H:%M:%S.SSS',zone='cern')
+        pl.gca().set_title('bunch %s, %s plane, %s'%(slot,
+                             plane.upper(),ts))
       except ValueError:
         if verbose:
           print('ERROR: plotting of bunch %s, '%(slot) +
@@ -458,20 +519,8 @@ class BSRTprofiles(object):
         pass
     if norm and check_plot:
       pl.plot(profs_avg['pos'],profs_avg['amp'],
-              label = 'average profile',color='k',linestyle='-')
+              label = 'average profile',color='k',linestyle='--')
 
-    pl.xlabel('position [mm]')
-    if norm:
-      pl.ylabel(r'probability (integral normalized to 1) [a.u.]')
-    else:
-      pl.ylabel('intensity [a.u.]')
-    pl.grid(b=True)
-    pl.legend(loc='best')
-    # convert ns -> s before creating date string
-    ts = ld.dumpdate(t=time_stamp*1.e-9,
-             fmt='%Y-%m-%d %H:%M:%S.SSS',zone='cern')
-    pl.gca().set_title('bunch %s, %s plane, %s'%(slot,
-                             plane.upper(),ts))
     return check_plot
   def plot_profile(self, slot = None, time_stamp = None, plane = 'h',
                    verbose = False):
