@@ -1,7 +1,6 @@
 #! /usr/bin/env python
 
 
-#import GaussFit as gfit
 try:
   import numpy as np
   import matplotlib
@@ -64,7 +63,7 @@ class BSRTprofiles(object):
                 amp : amplitude of profile [a.u.]
   Methods:
   --------
-  plot_profile : plot profile for specific bunch and timestamp    
+  plot_profile : plot profile for specific slot and timestamp    
   """
   @staticmethod
   def read_header(r):
@@ -297,7 +296,7 @@ class BSRTprofiles(object):
     for each timestamp.
     """
     if verbose:
-      if self.profile_stat is None:
+      if self.profiles_stat is None:
         print('... calculate statistical parameters')
       else:
         print('... delete old data and recalculate statistical ' + 
@@ -328,34 +327,35 @@ class BSRTprofiles(object):
           # mean0=0,sigma0=2,a0=1/sqrt(2*sigma0**2*pi)=0.2
           try:
             p,pcov = curve_fit(tb.gauss_pdf,profs_norm_avg['pos'],
-                               profs_norm_avg['amp'],p0=[0,2])
+                               profs_norm_avg['amp'],p0=[0,0,2])
             # error on p
             psig = [ np.sqrt(pcov[i,i]) for i in range(len(p)) ]
-            cent_gauss, sigma_gauss = p[0],p[1]
-            cent_gauss_err, sigma_gauss_err = psig[0],psig[1]
+            c_gauss     = p[0]
+            cent_gauss, sigma_gauss = p[1],p[2]
+            c_gauss_err = psig[0]
+            cent_gauss_err, sigma_gauss_err = psig[1],psig[2]
           except RuntimeError:
             if verbose:
               print("WARNING: fit failed for plane %s, "%(plane) +
                     "slotID %s, timestamp %s"%(slot,time_stamp))
-            cent_gauss, sigma_gauss = 0,0
-            cent_gauss_err, sigma_gauss_err = 0,0
+            c_gauss,cent_gauss, sigma_gauss = 0,0,0
+            c_gauss_err,cent_gauss_err, sigma_gauss_err = 0,0,0
             pass
           # b) statistical parameters
-          cent_stat = np.average(profs_norm_avg['pos'],
-                                 weights=profs_norm_avg['amp'])
-          sigma_stat = np.average((profs_norm_avg['pos']-cent_stat)**2,
-                                weights=profs_norm_avg['amp'])
-          cent_stat_median = np.average(profs_norm_avg['pos'],
-                                 weights=profs_norm_avg['amp'])
-          sigma_stat_median = np.average((profs_norm_avg['pos']
-                                -cent_stat)**2,
-                                weights=profs_norm_avg['amp'])
+          x,y = profs_norm_avg['pos'],profs_norm_avg['amp']
+          sum_y = y.sum()
+          cent_stat  = (x*y).sum()/sum_y
+          sigma_stat = (y*(x-cent_stat)**2).sum()/sum_y
+          cent_stat_median  = np.median(x)
+          sigma_stat_median = np.median(np.abs(x-cent_stat_median))
           #print 'append slot %s'%slot
-          self.profiles_stat[plane][slot].append((time_stamp,cent_gauss,
+          self.profiles_stat[plane][slot].append((time_stamp,c_gauss,
+            c_gauss_err,cent_gauss,
             cent_gauss_err,cent_stat,cent_stat_median,sigma_gauss,
             sigma_gauss_err,sigma_stat,sigma_stat_median))
     # convert to a structured array
-    ftype=[('time_stamp',int), ('cent_gauss',float), 
+    ftype=[('time_stamp',int), ('c_gauss',float),
+      ('c_gauss_err',float), ('cent_gauss',float), 
       ('cent_gauss_err',float), ('cent_stat',float), 
       ('cent_stat_median',float), ('sigma_gauss',float),
       ('sigma_gauss_err',float), ('sigma_stat',float),
@@ -402,7 +402,7 @@ class BSRTprofiles(object):
         profs[i]['amp'] = profs[i]['amp']/prof_int
       except ValueError:
         if verbose:
-          print('ERROR: no data found for bunch %s, '%(slot) +
+          print('ERROR: no data found for slot %s, '%(slot) +
           'profile %s, time stamp %s.'%(i,time_stamp) +
           ' len(x) =%s, len(y) = %s'%(len(profs[i]['pos']),
            len(profs[i]['amp'])))
@@ -451,7 +451,7 @@ class BSRTprofiles(object):
   def _plot_profile(self, slot = None, time_stamp = None, plane = 'h',
                     norm = True, verbose = False):
     """
-    Plot all profiles for specific bunch and time. Plot title displays 
+    Plot all profiles for specific slot and time. Plot title displays 
     'Europe/Zurich' time.
 
     Parameters:
@@ -484,6 +484,7 @@ class BSRTprofiles(object):
       if self.profiles_stat is not None:
         stat_aux = self.get_profile_stat(slot=slot,
                      time_stamp=time_stamp,plane=plane)
+        c_gauss = stat_aux['c_gauss']
         cent_gauss = stat_aux['cent_gauss']
         sigma_gauss    = stat_aux['sigma_gauss']
     # raw data profile
@@ -495,10 +496,6 @@ class BSRTprofiles(object):
         pl.plot(profs[i]['pos'],profs[i]['amp'],
                 label='profile %s'%(i+1),linestyle='-')
         if norm:
-          # plot Gaussian fit in addition
-          pl.plot(profs[i]['pos'],tb.gauss_pdf(profs[i]['pos'],
-                  cent_gauss,sigma_gauss),color='gray',linestyle='--',
-                  label='Gaussian fit')
           pl.ylabel(r'probability (integral normalized to 1) [a.u.]')
           pl.ylim(5.e-4,0.5)
         else:
@@ -509,25 +506,30 @@ class BSRTprofiles(object):
         # convert ns -> s before creating date string
         ts = ld.dumpdate(t=time_stamp*1.e-9,
                  fmt='%Y-%m-%d %H:%M:%S.SSS',zone='cern')
-        pl.gca().set_title('bunch %s, %s plane, %s'%(slot,
+        pl.gca().set_title('slot %s, %s plane, %s'%(slot,
                              plane.upper(),ts))
       except ValueError:
         if verbose:
-          print('ERROR: plotting of bunch %s, '%(slot) +
+          print('ERROR: plotting of slot %s, '%(slot) +
           'profile %s, time stamp %s failed.'%(i,time_stamp) +
           ' len(x) =%s, len(y) = %s'%(len(profs[i]['pos']),
            len(profs[i]['amp'])))
         check_plot = False
         pass
     if norm and check_plot:
+      # plot average over profiles
       pl.plot(profs_avg['pos'],profs_avg['amp'],
               label = 'average profile',color='k',linestyle='-')
+      # plot Gaussian fit in addition
+      pl.plot(profs[i]['pos'],tb.gauss_pdf(profs[i]['pos'],
+              c_gauss,cent_gauss,sigma_gauss),color='gray',
+              linestyle='--',label='Gaussian fit')
 
     return check_plot
   def plot_profile(self, slot = None, time_stamp = None, plane = 'h',
                    verbose = False):
     """
-    Plot raw data profiles for specific bunch and time. Plot title displays 
+    Plot raw data profiles for specific slot and time. Plot title displays 
     'Europe/Zurich' time.
 
     Parameters:
@@ -542,7 +544,7 @@ class BSRTprofiles(object):
   def plot_profile_norm(self, slot = None, time_stamp = None,
                         plane = 'h', verbose = False):
     """
-    Plot all profiles for specific bunch and time. Profiles are
+    Plot all profiles for specific slot and time. Profiles are
     normalized to represent a probability distribution, explicitly:
       norm_data = raw_data/(int(raw_data))
     so that:
@@ -562,7 +564,7 @@ class BSRTprofiles(object):
                   verbose = False):
     """
     Plot cumulative distribution function of normalized profiles for 
-    a specific bunch and time. Profiles are normalized to represent
+    a specific slot and time. Profiles are normalized to represent
     a probability distribution, explicitly:
       norm_data = raw_data/(int(raw_data)) 
     so that:
@@ -601,7 +603,7 @@ class BSRTprofiles(object):
                 label='profile %s'%(i+1))
       except ValueError:
         if verbose:
-          print('ERROR: plotting of bunch %s, '%(slot) +
+          print('ERROR: plotting of slot %s, '%(slot) +
           'profile %s, time stamp %s failed.'%(i,time_stamp) +
           ' len(x) =%s, len(y) = %s'%(len(profs[i]['pos']),
            len(profs[i]['amp'])))
@@ -623,14 +625,14 @@ class BSRTprofiles(object):
       # convert ns -> s before creating date string
       ts = ld.dumpdate(t=time_stamp*1.e-9,
                        fmt='%Y-%m-%d %H:%M:%S.SSS',zone='cern')
-      pl.gca().set_title('bunch %s, %s plane, %s'%(slot,
+      pl.gca().set_title('slot %s, %s plane, %s'%(slot,
                           plane.upper(),ts))
     return check_plot
   def plot_residual(self, slot = None, time_stamp = None, 
                     time_stamp_ref = None, plane = 'h',
                     verbose = False):
     """
-    Plot residual of normalized profiles for a specific bunch and time.
+    Plot residual of normalized profiles for a specific slot and time.
     Plot title displays 'Europe/Zurich' time.
 
     Parameters:
@@ -649,7 +651,7 @@ class BSRTprofiles(object):
                  time_stamp_ref = None, plane = 'h',
                  verbose = False):
     """
-    Plot ratio of normalized profiles for a specific bunch and time.
+    Plot ratio of normalized profiles for a specific slot and time.
     Plot title displays 'Europe/Zurich' time.
 
     Parameters:
@@ -668,7 +670,7 @@ class BSRTprofiles(object):
                            time_stamp = None, time_stamp_ref = None, 
                            plane = 'h', verbose = False):
     """
-    Plot residual or ratio of normalized profiles for a specific bunch and time.
+    Plot residual or ratio of normalized profiles for a specific slot and time.
     Plot title displays 'Europe/Zurich' time.
 
     Parameters:
@@ -726,7 +728,7 @@ class BSRTprofiles(object):
                     label='profile %s'%(i+1))
         except ValueError:
           if verbose:
-            print('ERROR: plotting of bunch %s, '%(slot) +
+            print('ERROR: plotting of slot %s, '%(slot) +
             'profile %s, time stamp %s failed.'%(i,time_stamp) +
             ' len(x) =%s, len(y) = %s'%(len(profs[i]['pos']),
              len(profs[i]['amp'])))
@@ -738,6 +740,18 @@ class BSRTprofiles(object):
         pl.plot(profs_avg['pos'][mask],
                 profs_avg['amp'][mask]-profs_ref_avg['amp'][mask_ref],
                 label = 'average profile',color='k',linestyle='-')
+        # get gaussian fit
+        if self.profiles_stat is not None:
+          stat_aux = self.get_profile_stat(slot=slot,
+                       time_stamp=time_stamp,plane=plane)
+          c_gauss = stat_aux['c_gauss']
+          cent_gauss = stat_aux['cent_gauss']
+          sigma_gauss    = stat_aux['sigma_gauss']
+          pl.plot(profs_avg['pos'][mask],
+                  profs_avg['amp'][mask]-
+                  tb.gauss_pdf(profs_avg['pos'][mask],c_gauss,
+                    cent_gauss,sigma_gauss), label = 'Gaussian fit',
+                  color='gray',linestyle='--')
       except (ValueError,IndexError):
         check_plot = False
         pass
@@ -760,7 +774,7 @@ class BSRTprofiles(object):
       # convert ns -> s before creating date string
       ts = ld.dumpdate(t=time_stamp*1.e-9,
                fmt='%Y-%m-%d %H:%M:%S.SSS',zone='cern')
-      pl.gca().set_title('bunch %s, %s plane, %s'%(slot,
+      pl.gca().set_title('slot %s, %s plane, %s'%(slot,
                                plane.upper(),ts))
     return check_plot
   def plot_all(self,slot = None, time_stamp = None,
@@ -796,7 +810,7 @@ class BSRTprofiles(object):
       fig.add_subplot(2,2,i+1)
     ts = ld.dumpdate(t=time_stamp*1.e-9,
              fmt='%Y-%m-%d %H:%M:%S.SSS',zone='cern')
-    pl.suptitle('bunch %s, %s plane, %s'%(slot,
+    pl.suptitle('slot %s, %s plane, %s'%(slot,
                              plane.upper(),ts))
     # 1) profile plot
     pl.subplot(223)
@@ -832,20 +846,20 @@ class BSRTprofiles(object):
                     ncol=2, mode="expand", borderaxespad=0.,
                     fontsize=10)
       pl.gca().set_xlim(-8,8)
-    fig.subplots_adjust(top=0.5)
+    fig.subplots_adjust(top=0.4)
     fig.tight_layout()
     return flaux
   def mk_profile_video(self, slot = None, time_stamp_ref=None,plt_dir='BSRTprofile_gifs',
                        delay=20, norm = True, export=False, 
                        verbose=False):
     """
-    Generates a video of the profiles of bunch with *slot*
+    Generates a video of the profiles of slot with *slot*
 
     Parameters:
     -----------
-    slot : slot or list of slots of bunches. If slot = None all bunches
-           are selected. In case of several bunch, on video is 
-           generated per bunch
+    slot : slot or list of slots of slots. If slot = None all slots
+           are selected. In case of several slot, on video is 
+           generated per slot
     plt_dir : directory to save videos
     delay : option for convert to define delay between pictures
     norm : if norm = false raw profiles are plotted
@@ -863,10 +877,10 @@ class BSRTprofiles(object):
     for plane in ['h','v']:
       # set slot and plane, initialize variables
       check_plot[plane] = {}
-      # 1) all bunches
+      # 1) all slots
       if slot is None:
         slots = self.profiles[plane].keys()
-      # 2) if single bunch 
+      # 2) if single slot 
       elif not hasattr(slot,"__iter__"):
         slots = [slot]
       # generate the figure and subplot
@@ -876,7 +890,7 @@ class BSRTprofiles(object):
           os.makedirs(tmpdir)
         check_plot[plane][slot] = []
         if verbose:
-          print('... generating plots for bunch %s'%slot)
+          print('... generating plots for slot %s'%slot)
         time_stamps = self.get_timestamps(slot=slot,plane=plane)
         pngcount = 0
         if verbose: 
@@ -889,7 +903,7 @@ class BSRTprofiles(object):
                                 plane=plane,norm=norm)
           # if plot failed, flaux = False -> append t check_plot
           if flaux is False: check_plot[plane][slot].append(time_stamp)
-          fnpl = os.path.join(tmpdir,'bunch_%s_plane_%s_%05d.png'%(slot,
+          fnpl = os.path.join(tmpdir,'slot_%s_plane_%s_%05d.png'%(slot,
                               plane,pngcount))
           if verbose: print '... save png %s'%(fnpl)
           pl.savefig(fnpl)
@@ -897,8 +911,8 @@ class BSRTprofiles(object):
         # create video from pngs
         if verbose: print '... creating .gif file with convert'
         cmd="convert -delay %s %s %s"%(delay,
-             os.path.join(tmpdir,'bunch_%s_plane_%s_*.png'%(slot,plane)),
-             os.path.join(plt_dir,'bunch_%s_plane_%s.gif'%(slot,plane)))
+             os.path.join(tmpdir,'slot_%s_plane_%s_*.png'%(slot,plane)),
+             os.path.join(plt_dir,'slot_%s_plane_%s.gif'%(slot,plane)))
         os.system(cmd)
         # delete png files already
         if (export is False) and (os.path.exists(tmpdir) is True):

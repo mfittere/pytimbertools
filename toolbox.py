@@ -4,7 +4,7 @@ from scipy.stats import norm
 def exp_fit(x,a,tau):
   return a*np.exp(x/tau)
 
-def gauss_pdf(x,mean,sigma):
+def gauss_pdf(x,c,mean,sigma):
   """
   probability distribution function for a normal or Gaussian
   distribution:
@@ -20,7 +20,7 @@ def gauss_pdf(x,mean,sigma):
   # and y = (x - loc) / scale
   # -> loc = mean, scale = sigma
   # gauss_fit(x,mean,sigma) = norm.pdf(x,mean,sigma)/sigma
-  return norm.pdf(x,mean,sigma)/sigma
+  return c+norm.pdf(x,mean,sigma)/sigma
 
 def gauss_cdf(x,mean,sigma):
   """
