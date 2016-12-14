@@ -4,41 +4,59 @@ from scipy.stats import norm
 def exp_fit(x,a,tau):
   return a*np.exp(x/tau)
 
-def gauss_pdf(x,c,mean,sigma):
+def gauss_pdf(x,c,mu,sig):
   """
   probability distribution function for a normal or Gaussian
   distribution:
-    gauss_pdf(x,mean,sigma) = 1/(sqrt(2*sigma**2*np.pi))*
-                             exp(-((x-mean)**2/(2*sigma**2)))
+    gauss_pdf(x,mu,sig) = 1/(sqrt(2*sig**2*np.pi))*
+                             exp(-((x-mu)**2/(2*sig**2)))
   
   Parameters:
   -----------
-  mean : mean of Gaussian distribution
-  sigma : sigma of Gaussian distribution
+  mu : mean of Gaussian distribution
+  sig : sigma of Gaussian distribution
   """
   # norm.pdf(x) = exp(-x**2/2)/sqrt(2*pi)
   # and y = (x - loc) / scale
-  # -> loc = mean, scale = sigma
-  # gauss_fit(x,mean,sigma) = norm.pdf(x,mean,sigma)/sigma
-  return c+norm.pdf(x,mean,sigma)/sigma
+  # -> loc = mu, scale = sig
+  # gauss_fit(x,mu,sig) = norm.pdf(x,mu,sig)/sig
+  return c+norm.pdf(x,mu,sig)/sig
 
-def gauss_cdf(x,mean,sigma):
+def qgauss_pdf(x,c,mu,sig):
   """
-  cumulative distribution function for a normal or Gaussian
+  probability distribution function for a q-Gaussian
   distribution:
-    gauss_pdf(x,meam,sigma) = 1/(sqrt(2*sigma**2*np.pi))*
-                                 exp(-((x-mean)**2/(2*sigma**2)))
-    gauss_cdf(x,mean,sigma) = 1/2*(1+erf((x-mean)/(sigma*sqrt(2)))
+    qgauss_pdf(x,) = 1/(sqrt(2*sig**2*np.pi))*
+                             exp(-((x-mu)**2/(2*sig**2)))
   
   Parameters:
   -----------
-  mean : mean of Gaussian distribution
-  sigma : sigma of Gaussian distribution
+  mu : mean of Gaussian distribution
+  sig : sigma of Gaussian distribution
   """
-  # loc = mean, scale = sigma
-  # gauss_pdf(x,mean,sigma) = norm.pdf(x,mean,sigma)/sigma
-  # -> norm.cdf(x,mean,sigma)/sigma 
-  return norm.cdf(x,mean,sigma)
+  # norm.pdf(x) = exp(-x**2/2)/sqrt(2*pi)
+  # and y = (x - loc) / scale
+  # -> loc = mu, scale = sig
+  # gauss_fit(x,mu,sig) = norm.pdf(x,mu,sig)/sig
+  return c+norm.pdf(x,mu,sig)/sig
+
+def gauss_cdf(x,mu,sig):
+  """
+  cumulative distribution function for a normal or Gaussian
+  distribution:
+    gauss_pdf(x,meam,sig) = 1/(sqrt(2*sig**2*np.pi))*
+                                 exp(-((x-mu)**2/(2*sig**2)))
+    gauss_cdf(x,mu,sig) = 1/2*(1+erf((x-mu)/(sig*sqrt(2)))
+  
+  Parameters:
+  -----------
+  mu : mean of Gaussian distribution
+  sig : sigma of Gaussian distribution
+  """
+  # loc = mu, scale = sig
+  # gauss_pdf(x,mu,sig) = norm.pdf(x,mu,sig)/sig
+  # -> norm.cdf(x,mu,sig)/sig 
+  return norm.cdf(x,mu,sig)
 
 def movingaverage(data,navg):
   """calculates the moving average over
