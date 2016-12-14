@@ -6,13 +6,14 @@ try:
   import matplotlib
   import matplotlib.pyplot as pl
   from scipy.optimize import curve_fit
+  from scipy.special import erf
 except ImportError:
   print('No module found: numpy, matplotlib and scipy modules ' +
         'should be present to run pytimbertools')
 import os
 import shutil
 import glob
-from statsmodels.nonparametric.smoothers_lowess import lowess
+# from statsmodels.nonparametric.smoothers_lowess import lowess
 from matplotlib import gridspec
 
 import BinaryFileIO as bio
@@ -116,7 +117,7 @@ class BSRTprofiles(object):
     self.profiles_stat = profiles_stat
 
   @classmethod
-  def load_files(cls,files=None,verbose=False):
+  def load_files(cls,files=None,verbose=True):
     """
     load BSRT profile files
 
@@ -190,42 +191,48 @@ class BSRTprofiles(object):
               # h plane
               if len(projPositionSet1) == 0:
                 check_data = False
-                print("WARNING: len(projPositionSet1) = 0 for " +
-                      "slotID %s, timestamp %s! "%(slotID,time_stamp) + 
-                      "Data is discarded (both *Set1 and *Set2)!")
+                if verbose:
+                  print("WARNING: len(projPositionSet1) = 0 for " +
+                        "slotID %s, timestamp %s! "%(slotID,time_stamp) + 
+                        "Data is discarded (both *Set1 and *Set2)!")
               elif (len(profilesSet1[width*(i*num_bunches+j):
                          width*(i*num_bunches+(j+1))]) == 0):
                 check_data = False
-                print("WARNING: len(profilesSet1[...]) = 0 for " +
-                      "slotID %s, timestamp %s! "%(slotID,time_stamp) +
-                      " Data is discarded (both *Set1 and *Set2)!")
+                if verbose:
+                  print("WARNING: len(profilesSet1[...]) = 0 for " +
+                        "slotID %s, timestamp %s! "%(slotID,time_stamp) +
+                        " Data is discarded (both *Set1 and *Set2)!")
               elif (len(projPositionSet1)!=
                      len(profilesSet1[width*(i*num_bunches+j):
                            width*(i*num_bunches+(j+1))])):
-                print("WARNING: len(projPositionSet1) != " + 
-                      "len(profilesSet1[...]) for " +
-                      "slotID %s, timestamp %s! "%(slotID,time_stamp) +
-                      "Data is discarded (both *Set1 and *Set2)!")
+                if verbose:
+                  print("WARNING: len(projPositionSet1) != " + 
+                        "len(profilesSet1[...]) for " +
+                        "slotID %s, timestamp %s! "%(slotID,time_stamp) +
+                        "Data is discarded (both *Set1 and *Set2)!")
                 check_data = False
               # v plane
               if len(projPositionSet2) == 0:
                 check_data = False
-                print("WARNING: len(projPositionSet2) = 0 for " +
-                      "slotID %s, timestamp %s! "%(slotID,time_stamp) + 
-                      "Data is discarded (both *Set1 and *Set2)!")
+                if verbose:
+                  print("WARNING: len(projPositionSet2) = 0 for " +
+                        "slotID %s, timestamp %s! "%(slotID,time_stamp) + 
+                        "Data is discarded (both *Set1 and *Set2)!")
               elif (len(profilesSet2[height*(i*num_bunches+j):
                          height*(i*num_bunches+(j+1))]) == 0):
                 check_data = False
-                print("WARNING: len(profilesSet2[...]) = 0 for " +
-                      "slotID %s, timestamp %s! "%(slotID,time_stamp) +
-                      " Data is discarded (both *Set1 and *Set2)!")
+                if verbose:
+                  print("WARNING: len(profilesSet2[...]) = 0 for " +
+                        "slotID %s, timestamp %s! "%(slotID,time_stamp) +
+                        " Data is discarded (both *Set1 and *Set2)!")
               elif (len(projPositionSet2)!=
                      len(profilesSet2[height*(i*num_bunches+j):
                            height*(i*num_bunches+(j+1))])):
-                print("WARNING: len(projPositionSet2) != " + 
-                      "len(profilesSet2[...]) for " +
-                      "slotID %s, timestamp %s! "%(slotID,time_stamp) +
-                      "Data is discarded (both *Set1 and *Set2)!")
+                if verbose:
+                  print("WARNING: len(projPositionSet2) != " + 
+                        "len(profilesSet2[...]) for " +
+                        "slotID %s, timestamp %s! "%(slotID,time_stamp) +
+                        "Data is discarded (both *Set1 and *Set2)!")
                 check_data = False
               else:
                 check_data = True
@@ -267,7 +274,7 @@ class BSRTprofiles(object):
       for k in prof.keys():
         prof[k] = np.array(prof[k], dtype=ftype)
     return cls(records=records, profiles=profiles)
-  def clean_data(self,stdamp = 3000):
+  def clean_data(self,stdamp = 3000,verbose = True):
     """
     removes all profiles considered to be just noise, explicitly
     profiles with:
@@ -283,9 +290,10 @@ class BSRTprofiles(object):
             rm_ts_std.append(self.profiles[plane][slot][i]['time_stamp'])
         rm_ts = list(set(rm_ts_std))
         for ts in rm_ts:
-          print("... removing entry for plane %s, "%(plane) +
-                "slot %s, time stamp "%(slot) +
-                "%s"%(self.profiles[plane][slot][i]['time_stamp']))
+          if verbose:
+            print("... removing entry for plane %s, "%(plane) +
+                  "slot %s, time stamp "%(slot) +
+                  "%s"%(self.profiles[plane][slot][i]['time_stamp']))
         rm_mask = np.in1d(self.profiles[plane][slot]['time_stamp'],
                           rm_ts,invert=True)
         self.profiles[plane][slot] = self.profiles[plane][slot][rm_mask]
@@ -295,6 +303,13 @@ class BSRTprofiles(object):
     calculate statistical parameters for the average over all profiles
     for each timestamp.
     """
+    # constants for cumulative distribution later
+    # - mean = 50 % of cumulative distribution
+    # - in n sigma of the distribution erf(n/sqrt(2)) per cent are 
+    #   contained:
+    #     1 sigma = erf(1/sqrt(2)) (68 %)
+    #             = 1 - erf(1/sqrt(2)) (32%)
+    cumsum_1sigma = erf(1/np.sqrt(2))
     if verbose:
       if self.profiles_stat is None:
         print('... calculate statistical parameters')
@@ -315,6 +330,7 @@ class BSRTprofiles(object):
           # 1b) center of gravity sum(x*w) (cent_stat)
           # 1c) median (cent_stat_median)
           # 1d) 50 % of cummulative sum (cent_cumsum)
+          # 1e) peak of distribution
           # 2) estimate of distribution width with three different 
           #    methods:
           # 2a) Gaussian fit (sigma_gauss)
@@ -324,7 +340,10 @@ class BSRTprofiles(object):
 
           # a) Gaussian fit
           # assume initial values of
-          # mean0=0,sigma0=2,a0=1/sqrt(2*sigma0**2*pi)=0.2
+          # mean0=0,sigma0=2,c0=0
+          # fit function =
+          #   c0+1/sqrt(2*sigma0**2*pi)*exp(((x-x0)/sigma0)**2/2)
+          # c0 is also an estimate for the background
           try:
             p,pcov = curve_fit(tb.gauss_pdf,profs_norm_avg['pos'],
                                profs_norm_avg['amp'],p0=[0,0,2])
@@ -344,22 +363,42 @@ class BSRTprofiles(object):
           # b) statistical parameters
           x,y = profs_norm_avg['pos'],profs_norm_avg['amp']
           sum_y = y.sum()
+          # bins are equally spaced
+          # -> x[n]-x[n-1] = x[1]-x[0] for all n
+          dx = x[1] - x[0]
+          cumsum_y = dx*y.cumsum()
+          # centroid
           cent_stat  = (x*y).sum()/sum_y
+          cumsum_idx_50 = (np.abs(cumsum_y-0.5)).argmin()
+          cent_cumsum = x[cumsum_idx_50] 
+          # 50% of cumulative sum and median are the same by definiton
+          cent_stat_median  = cent_cumsum 
+          cent_peak = x[y.argmax()]
+          # sigma
           sigma_stat = (y*(x-cent_stat)**2).sum()/sum_y
-          cent_stat_median  = np.median(x)
           sigma_stat_median = np.median(np.abs(x-cent_stat_median))
+          cumsum_idx_sigma_32 = (np.abs(cumsum_y-
+                                     cumsum_1sigma)).argmin()
+          cumsum_idx_sigma_68 = (np.abs(cumsum_y-
+                                     (1-cumsum_1sigma))).argmin()
+          sigma_cumsum_32 = cent_cumsum - x[cumsum_idx_sigma_32]
+          sigma_cumsum_68 = x[cumsum_idx_sigma_68] - cent_cumsum
+
           #print 'append slot %s'%slot
           self.profiles_stat[plane][slot].append((time_stamp,c_gauss,
-            c_gauss_err,cent_gauss,
-            cent_gauss_err,cent_stat,cent_stat_median,sigma_gauss,
-            sigma_gauss_err,sigma_stat,sigma_stat_median))
+            c_gauss_err,cent_gauss,cent_gauss_err,cent_stat,
+            cent_stat_median,cent_cumsum,cent_peak,
+            sigma_gauss,sigma_gauss_err,sigma_stat,sigma_stat_median,
+            sigma_cumsum_32,sigma_cumsum_68))
     # convert to a structured array
     ftype=[('time_stamp',int), ('c_gauss',float),
       ('c_gauss_err',float), ('cent_gauss',float), 
       ('cent_gauss_err',float), ('cent_stat',float), 
-      ('cent_stat_median',float), ('sigma_gauss',float),
-      ('sigma_gauss_err',float), ('sigma_stat',float),
-      ('sigma_stat_median',float)]
+      ('cent_stat_median',float), ('cent_cumsum',float),
+      ('cent_peak',float),
+      ('sigma_gauss',float), ('sigma_gauss_err',float),
+      ('sigma_stat',float), ('sigma_stat_median',float),
+      ('sigma_cumsum_32',float), ('sigma_cumsum_68',float)]
     for plane in ['h','v']:
       for k in self.profiles_stat[plane].keys():
         self.profiles_stat[plane][k] = np.array(
@@ -746,7 +785,7 @@ class BSRTprofiles(object):
                        time_stamp=time_stamp,plane=plane)
           c_gauss = stat_aux['c_gauss']
           cent_gauss = stat_aux['cent_gauss']
-          sigma_gauss    = stat_aux['sigma_gauss']
+          sigma_gauss = stat_aux['sigma_gauss']
           pl.plot(profs_avg['pos'][mask],
                   profs_avg['amp'][mask]-
                   tb.gauss_pdf(profs_avg['pos'][mask],c_gauss,
