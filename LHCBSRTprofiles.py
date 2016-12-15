@@ -20,6 +20,18 @@ import BinaryFileIO as bio
 import localdate as ld
 import toolbox as tb
 
+# plot colors
+# individual profiles
+profile_colors = {'cyan':'#00FFFF','LightCyan':'#E0FFFF',
+  'PaleTurquoise':'#AFEEEE','Aquamarine':'#7FFFD4',
+  'Turquoise':'#40E0D0','CadetBlue':'#5F9EA0','SteelBlue':'#4682B4',
+  'LightSteelBlue':'#B0C4DE','PowderBlue':'#B0E0E6',
+  'SkyBlue':'#87CEEB','DeepSkyBlue':'#00BFFF','DodgerBlue':'#1E90FF',
+  'CornflowerBlue':'#6495ED','MediumBlue':'#0000CD',
+  'DarkBlue':'#00008B'}
+# fits
+fit_colors = {'Red':'#FF0000','DarkRed':'#8B0000'}
+
 class BSRTprofiles(object):
   """
   class to analyze BSRT profiles
@@ -327,40 +339,78 @@ class BSRTprofiles(object):
                              time_stamp=time_stamp, plane=plane)            
           # 1) estimate centroid with three different methods:
           # 1a) Gaussian fit (cent_gauss)
-          # 1b) center of gravity sum(x*w) (cent_stat)
-          # 1c) median (cent_stat_median)
-          # 1d) 50 % of cummulative sum (cent_cumsum)
-          # 1e) peak of distribution
+          # 1b) Gaussian fit (cent_gauss)
+          # 1c) center of gravity sum(x*w) (cent_stat)
+          # 1d) median (cent_stat_median)
+          # 1e) 50 % of cummulative sum (cent_cumsum)
+          # 1f) peak of distribution
           # 2) estimate of distribution width with three different 
           #    methods:
           # 2a) Gaussian fit (sigma_gauss)
-          # 2b) statistical rms sum(x*w) (sigma_stat)
-          # 2c) median absolute deviation = median(|x-median(x)|)
-          # 2d) 26 % and 84% of cummulative sum (sigma_cumsum)
+          # 2b) Gaussian fit (sigma_gauss)
+          # 2c) statistical rms sum(x*w) (sigma_stat)
+          # 2d) median absolute deviation = median(|x-median(x)|)
+          # 2e) 26 % and 84% of cummulative sum (sigma_cumsum)
 
           # a) Gaussian fit
           # assume initial values of
-          # mean0=0,sigma0=2,c0=0
+          # c=0,a=1,mu=0,sig=2
           # fit function =
-          #   c0+1/sqrt(2*sigma0**2*pi)*exp(((x-x0)/sigma0)**2/2)
-          # c0 is also an estimate for the background
+          #   c+a*1/sqrt(2*sig**2*pi)*exp(((x-mu)/sig)**2/2)
+          # c is also an estimate for the background
+          # a compensate for c0 so that the integral over the
+          # the distribution is equal to 1. If c is small, a should be
+          # close to 1
           try:
             p,pcov = curve_fit(tb.gauss_pdf,profs_norm_avg['pos'],
-                               profs_norm_avg['amp'],p0=[0,0,2])
+                               profs_norm_avg['amp'],p0=[0,1,0,2])
             # error on p
             psig = [ np.sqrt(pcov[i,i]) for i in range(len(p)) ]
-            c_gauss     = p[0]
-            cent_gauss, sigma_gauss = p[1],p[2]
-            c_gauss_err = psig[0]
-            cent_gauss_err, sigma_gauss_err = psig[1],psig[2]
+            c_gauss, a_gauss = p[0], p[1]
+            cent_gauss, sigma_gauss = p[2],p[3]
+            c_gauss_err, a_gauss_err = psig[0], psig[1]
+            cent_gauss_err, sigma_gauss_err = psig[2],psig[3]
           except RuntimeError:
             if verbose:
-              print("WARNING: fit failed for plane %s, "%(plane) +
-                    "slotID %s, timestamp %s"%(slot,time_stamp))
-            c_gauss,cent_gauss, sigma_gauss = 0,0,0
-            c_gauss_err,cent_gauss_err, sigma_gauss_err = 0,0,0
+              print("WARNING: Gaussian fit failed for " +
+                    "plane %s, slotID %s and "%(slot,plane) +
+                    "timestamp %s"%(time_stamp))
+            c_gauss, a_gauss, cent_gauss, sigma_gauss = 0,0,0,0
+            c_gauss_err, a_gauss_err = 0,0
+            cent_gauss_err, sigma_gauss_err = 0,0
             pass
-          # b) statistical parameters
+          # b) qGaussian fit, note that 1 < q < 3 -> constraint fit
+          #    parameters
+          # fit function =
+          #   c+a*sqrt(beta)/cq*eq(-beta*(x-mu)**2)
+          # cq is also an estimate for the background
+          # a compensate for c0 so that the integral over the
+          # the distribution is equal to 1. If c0 is small, a should be
+          # close to 1
+          try:
+            p,pcov = curve_fit(tb.qgauss_pdf,profs_norm_avg['pos'],
+                               profs_norm_avg['amp'],
+                               bounds=([-1,0,1,-np.inf,0],
+                                 [1,np.inf,3,np.inf,np.inf]))
+            # error on p
+            psig = [ np.sqrt(pcov[i,i]) for i in range(len(p)) ]
+            c_qgauss, a_qgauss = p[0], p[1]
+            q_qgauss = p[2]
+            cent_qgauss, sigma_qgauss = p[3], p[4]
+            c_qgauss_err, a_qgauss_err = psig[0], psig[1]
+            q_qgauss_err = psig[2]
+            cent_qgauss_err, sigma_qgauss_err = psig[3],psig[4]
+          except RuntimeError:
+            if verbose:
+              print("WARNING: q-Gaussian fit failed for " +
+                    "plane %s, slotID %s and "%(slot,plane) +
+                    "timestamp %s"%(time_stamp))
+            c_qgauss, a_qgauss, q_qgauss = 0,0,0
+            cent_qgauss, sigma_qgauss = 0,0
+            c_qgauss_err, a_qgauss_err, q_qgauss_err = 0,0,0
+            cent_qgauss_err, sigma_qgauss_err = 0,0
+            pass
+          # c) statistical parameters
           x,y = profs_norm_avg['pos'],profs_norm_avg['amp']
           sum_y = y.sum()
           # bins are equally spaced
@@ -384,21 +434,32 @@ class BSRTprofiles(object):
           sigma_cumsum_32 = cent_cumsum - x[cumsum_idx_sigma_32]
           sigma_cumsum_68 = x[cumsum_idx_sigma_68] - cent_cumsum
 
-          #print 'append slot %s'%slot
-          self.profiles_stat[plane][slot].append((time_stamp,c_gauss,
-            c_gauss_err,cent_gauss,cent_gauss_err,cent_stat,
-            cent_stat_median,cent_cumsum,cent_peak,
-            sigma_gauss,sigma_gauss_err,sigma_stat,sigma_stat_median,
-            sigma_cumsum_32,sigma_cumsum_68))
+          self.profiles_stat[plane][slot].append((time_stamp,
+            # Gaussian fit
+            c_gauss,c_gauss_err,a_gauss,a_gauss_err,cent_gauss,
+            cent_gauss_err,cent_stat,sigma_gauss,sigma_gauss_err,
+            # q-Gaussian fit
+            c_qgauss,c_qgauss_err,a_qgauss,a_qgauss_err,q_qgauss,
+            q_qgauss_err,cent_qgauss,cent_qgauss_err,sigma_qgauss,
+            sigma_qgauss_err,
+            # statistical parameters
+            cent_stat_median,cent_cumsum,cent_peak,sigma_stat,
+            sigma_stat_median,sigma_cumsum_32,sigma_cumsum_68))
     # convert to a structured array
-    ftype=[('time_stamp',int), ('c_gauss',float),
-      ('c_gauss_err',float), ('cent_gauss',float), 
-      ('cent_gauss_err',float), ('cent_stat',float), 
-      ('cent_stat_median',float), ('cent_cumsum',float),
-      ('cent_peak',float),
-      ('sigma_gauss',float), ('sigma_gauss_err',float),
-      ('sigma_stat',float), ('sigma_stat_median',float),
-      ('sigma_cumsum_32',float), ('sigma_cumsum_68',float)]
+    ftype=[('time_stamp',int), ('c_gauss',float), 
+           ('c_gauss_err',float), ('a_gauss',float),
+           ('a_gauss_err',float), ('cent_gauss',float),
+           ('cent_gauss_err',float), ('cent_stat',float),
+           ('sigma_gauss',float), ('sigma_gauss_err',float),
+           ('c_qgauss',float), ('c_qgauss_err',float),
+           ('a_qgauss',float), ('a_qgauss_err',float),
+           ('q_qgauss',float), ('q_qgauss_err',float),
+           ('cent_qgauss',float), ('cent_qgauss_err',float),
+           ('sigma_qgauss',float), ('sigma_qgauss_err',float),
+           ('cent_stat_median',float), ('cent_cumsum',float),
+           ('cent_peak',float), ('sigma_stat',float),
+           ('sigma_stat_median',float), ('sigma_cumsum_32',float),
+           ('sigma_cumsum_68',float)]
     for plane in ['h','v']:
       for k in self.profiles_stat[plane].keys():
         self.profiles_stat[plane][k] = np.array(
@@ -523,9 +584,15 @@ class BSRTprofiles(object):
       if self.profiles_stat is not None:
         stat_aux = self.get_profile_stat(slot=slot,
                      time_stamp=time_stamp,plane=plane)
-        c_gauss = stat_aux['c_gauss']
+        # Gaussian fit
+        c_gauss, a_gauss = stat_aux['c_gauss'], stat_aux['a_gauss']
         cent_gauss = stat_aux['cent_gauss']
         sigma_gauss    = stat_aux['sigma_gauss']
+        # q-Gaussian fit
+        c_qgauss, a_qgauss = stat_aux['c_qgauss'], stat_aux['a_qgauss']
+        q_qgauss = stat_aux['q_qgauss']
+        cent_qgauss = stat_aux['cent_qgauss']
+        sigma_qgauss    = stat_aux['sigma_qgauss']
     # raw data profile
     else:
       profs = self.get_profile(slot=slot,time_stamp=time_stamp,
@@ -533,7 +600,8 @@ class BSRTprofiles(object):
     for i in xrange(len(profs)):
       try:
         pl.plot(profs[i]['pos'],profs[i]['amp'],
-                label='profile %s'%(i+1),linestyle='-')
+                label='profile %s'%(i+1),linestyle='-',
+                color=profile_colors.values()[i])
         if norm:
           pl.ylabel(r'probability (integral normalized to 1) [a.u.]')
           pl.ylim(5.e-4,0.5)
@@ -559,10 +627,16 @@ class BSRTprofiles(object):
       # plot average over profiles
       pl.plot(profs_avg['pos'],profs_avg['amp'],
               label = 'average profile',color='k',linestyle='-')
-      # plot Gaussian fit in addition
+      # plot Gaussian fit
       pl.plot(profs[i]['pos'],tb.gauss_pdf(profs[i]['pos'],
-              c_gauss,cent_gauss,sigma_gauss),color='gray',
-              linestyle='--',label='Gaussian fit')
+              c_gauss,a_gauss,cent_gauss,sigma_gauss),
+              color=fit_colors['Red'],
+              linestyle='--',linewidth=1,label='Gaussian fit')
+      # plot q-Gaussian fit
+      pl.plot(profs[i]['pos'],tb.qgauss_pdf(profs[i]['pos'],
+              c_qgauss,a_qgauss,q_qgauss,cent_qgauss,sigma_qgauss),
+              color=fit_colors['DarkRed'],
+              linestyle='-',linewidth=1,label='q-Gaussian fit')
 
     return check_plot
   def plot_profile(self, slot = None, time_stamp = None, plane = 'h',
@@ -779,18 +853,29 @@ class BSRTprofiles(object):
         pl.plot(profs_avg['pos'][mask],
                 profs_avg['amp'][mask]-profs_ref_avg['amp'][mask_ref],
                 label = 'average profile',color='k',linestyle='-')
-        # get gaussian fit
         if self.profiles_stat is not None:
           stat_aux = self.get_profile_stat(slot=slot,
                        time_stamp=time_stamp,plane=plane)
-          c_gauss = stat_aux['c_gauss']
+          # Gaussian fit
+          c_gauss, a_gauss = stat_aux['c_gauss'], stat_aux['a_gauss']
           cent_gauss = stat_aux['cent_gauss']
-          sigma_gauss = stat_aux['sigma_gauss']
+          sigma_gauss    = stat_aux['sigma_gauss']
+          # q-Gaussian fit
+          c_qgauss, a_qgauss = stat_aux['c_qgauss'], stat_aux['a_qgauss']
+          q_qgauss = stat_aux['q_qgauss']
+          cent_qgauss = stat_aux['cent_qgauss']
+          sigma_qgauss    = stat_aux['sigma_qgauss']
           pl.plot(profs_avg['pos'][mask],
                   profs_avg['amp'][mask]-
-                  tb.gauss_pdf(profs_avg['pos'][mask],c_gauss,
+                  tb.gauss_pdf(profs_avg['pos'][mask],c_gauss,a_gauss,
                     cent_gauss,sigma_gauss), label = 'Gaussian fit',
-                  color='gray',linestyle='--')
+                  color=fit_colors['Red'],linestyle='--')
+          pl.plot(profs_avg['pos'][mask],
+                  profs_avg['amp'][mask]-
+                  tb.qgauss_pdf(profs_avg['pos'][mask],c_qgauss,a_qgauss,
+                    q_qgauss,cent_qgauss,sigma_qgauss), 
+                  label = 'q-Gaussian fit',
+                  color=fit_colors['DarkRed'],linestyle='-')
       except (ValueError,IndexError):
         check_plot = False
         pass

@@ -1,18 +1,22 @@
 import numpy as np
 from scipy.stats import norm
+from scipy.special import gamma
 
 def exp_fit(x,a,tau):
   return a*np.exp(x/tau)
 
-def gauss_pdf(x,c,mu,sig):
+def gauss_pdf(x,c,a,mu,sig):
   """
   probability distribution function for a normal or Gaussian
   distribution:
-    gauss_pdf(x,mu,sig) = 1/(sqrt(2*sig**2*np.pi))*
+    gauss_pdf(x,mu,sig) = c+a*1/(sqrt(2*sig**2*np.pi))*
                              exp(-((x-mu)**2/(2*sig**2)))
   
   Parameters:
   -----------
+  c : constant offset to fit background of profiles
+  a : amplitude to compensate for *c*. a should be close to 1 if c is
+      small. a should be equal to 1 if c is zero.
   mu : mean of Gaussian distribution
   sig : sigma of Gaussian distribution
   """
@@ -20,25 +24,41 @@ def gauss_pdf(x,c,mu,sig):
   # and y = (x - loc) / scale
   # -> loc = mu, scale = sig
   # gauss_fit(x,mu,sig) = norm.pdf(x,mu,sig)/sig
-  return c+norm.pdf(x,mu,sig)/sig
+  return c+a*norm.pdf(x,mu,sig)/sig
 
-def qgauss_pdf(x,c,mu,sig):
+def qgauss_pdf(x,c,a,q,mu,beta):
   """
-  probability distribution function for a q-Gaussian
-  distribution:
-    qgauss_pdf(x,) = 1/(sqrt(2*sig**2*np.pi))*
-                             exp(-((x-mu)**2/(2*sig**2)))
-  
+  Probability distribution function for a q-Gaussian distribution. A 
+  q-Gaussian models Gaussian distribution with heavier tails. For q=1 
+  the q-Gaussian converges versus a Gaussian.
+ 
+    qgauss_pdf(x,c,a,mu,beta,q) = 
+       c+a*(sqrt(beta)/c_q)*eq(-beta*(x-mu)**2)
+  with
+    c_q(q) = (sqrt(pi)*gamma((3-q)/(2*(q-1))))/(sqrt(q-1)*gamma(1/(q-1)))  
+  where gamma is the gamma-function, and
+    eq(x) = (1+(1-q)*x)**(1/(1-q))
+  The variance of a q-Gaussian is given by:
+    sigma = 1/(beta*(5-3*q)) for q < 5/3
+          = infinity         for 5/3 < q < 2
+          = undefined        for 2 <= q < 3
+  The larger q, the heavier the tails of the distribution.
+
   Parameters:
   -----------
-  mu : mean of Gaussian distribution
-  sig : sigma of Gaussian distribution
+  c : constant offset to fit background of profiles
+  a : amplitude to compensate for *c*. a should be close to 1 if c is
+      small. a should be equal to 1 if c is zero.
+  mu : mean of q-Gaussian distribution
+  beta : beta of q-Gaussian distribution
+  q : q of a q-Gaussian
   """
-  # norm.pdf(x) = exp(-x**2/2)/sqrt(2*pi)
-  # and y = (x - loc) / scale
-  # -> loc = mu, scale = sig
-  # gauss_fit(x,mu,sig) = norm.pdf(x,mu,sig)/sig
-  return c+norm.pdf(x,mu,sig)/sig
+  if 1 < q and q < 3:
+    c_q = ( ( np.sqrt(np.pi)*gamma((3-q)/(2*(q-1))) ) / 
+            (np.sqrt(q-1)*gamma(1/(q-1))) )
+    return c+a*(np.sqrt(beta)/c_q)*( (1+beta*(q-1)*(x-mu)**2)**(1/(1-q)) )
+  else:
+    raise ValueError('qgauss_pdf only defined for 1 < q < 3')
 
 def gauss_cdf(x,mu,sig):
   """
