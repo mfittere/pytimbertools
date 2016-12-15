@@ -24,7 +24,8 @@ def gauss_pdf(x,c,a,mu,sig):
   # and y = (x - loc) / scale
   # -> loc = mu, scale = sig
   # gauss_fit(x,mu,sig) = norm.pdf(x,mu,sig)/sig
-  return c+a*norm.pdf(x,mu,sig)/sig
+#  return c+a*norm.pdf(x,mu,sig)/sig
+  return c+a*norm.pdf(x,mu,sig)
 
 def qgauss_pdf(x,c,a,q,mu,beta):
   """
@@ -84,3 +85,34 @@ def movingaverage(data,navg):
   weights = np.repeat(1.0, navg)/navg
   dataavg = np.convolve(data, weights, 'valid')
   return dataavg
+
+def median(x,w):
+  """
+  calculates the median weighted with the weights w. This is equivalent
+  to calculating the 50% value of the cumulative sum of x*w.
+
+  Example:
+  --------
+  x = [0.1,0.3,0.5]
+  w = [1,0.5,1.5]
+  median = np.median([0.1,0.1,0.3,0.5,0.5,0.5])
+  """
+  # each value of x has to be present w times in xm where the weighted
+  # median of x is then median(xm)
+  # e.g. x = [0.1,0.3,0.5],w = [1,0.5,1.5] -> w/w.min() = [2,1,3]
+  # -> xm = [0.1,0.1,0.3,0.5,0.5,0.5]
+  #    median(x,w) = median(xm)
+  #    len(xm) = w.sum()
+  # convert to integers
+  wmin = w.min()
+  w = w/wmin
+  # for floating point numbers dividing by wmin still doesn't yield
+  # integer numbers -> just round the number
+  wlen = round(w.sum(),0)
+  cs = (x*w).cumsum()
+  cs_tot = cs[-1]
+  idx_cs_50 = np.argmin(np.abs(cs-0.5*cs_tot))
+  if wlen%2 == 1:
+    return x[idx_cs_50]
+  if wlen%2 == 0:
+    return (x[idx_cs_50]+x[idx_cs_50+1])/2.
