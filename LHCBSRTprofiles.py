@@ -373,7 +373,7 @@ class BSRTprofiles(object):
           except RuntimeError:
             if verbose:
               print("WARNING: Gaussian fit failed for " +
-                    "plane %s, slotID %s and "%(slot,plane) +
+                    "plane %s, slotID %s and "%(plane,slot) +
                     "timestamp %s"%(time_stamp))
             c_gauss, a_gauss, cent_gauss, sigma_gauss = 0,0,0,0
             c_gauss_err, a_gauss_err = 0,0
@@ -403,7 +403,7 @@ class BSRTprofiles(object):
           except RuntimeError:
             if verbose:
               print("WARNING: q-Gaussian fit failed for " +
-                    "plane %s, slotID %s and "%(slot,plane) +
+                    "plane %s, slotID %s and "%(plane,slot) +
                     "timestamp %s"%(time_stamp))
             c_qgauss, a_qgauss, q_qgauss = 0,0,0
             cent_qgauss, sigma_qgauss = 0,0
@@ -433,7 +433,12 @@ class BSRTprofiles(object):
                                      (1-cumsum_1sigma))).argmin()
           sigma_cumsum_32 = cent_cumsum - x[cumsum_idx_sigma_32]
           sigma_cumsum_68 = x[cumsum_idx_sigma_68] - cent_cumsum
-
+          # background estimate
+          # average the last 10 bins
+          bgnavg = 10
+          bg_avg_left = y[:bgnavg].mean()
+          bg_avg_right = y[-bgnavg:].mean()
+          bg_avg = (bg_avg_left+bg_avg_right)/2
           self.profiles_stat[plane][slot].append((time_stamp,
             # Gaussian fit
             c_gauss,c_gauss_err,a_gauss,a_gauss_err,cent_gauss,
@@ -444,7 +449,9 @@ class BSRTprofiles(object):
             sigma_qgauss_err,
             # statistical parameters
             cent_stat_median,cent_cumsum,cent_peak,sigma_stat,
-            sigma_stat_median,sigma_cumsum_32,sigma_cumsum_68))
+            sigma_stat_median,sigma_cumsum_32,sigma_cumsum_68,
+            # background estimate
+            bg_avg_left,bg_avg_right,bg_avg))
     # convert to a structured array
     ftype=[('time_stamp',int), ('c_gauss',float), 
            ('c_gauss_err',float), ('a_gauss',float),
@@ -459,7 +466,9 @@ class BSRTprofiles(object):
            ('cent_stat_median',float), ('cent_cumsum',float),
            ('cent_peak',float), ('sigma_stat',float),
            ('sigma_stat_median',float), ('sigma_cumsum_32',float),
-           ('sigma_cumsum_68',float)]
+           ('sigma_cumsum_68',float),
+           ('bg_avg_left',float),('bg_avg_right',float),
+           ('bg_avg',float)]
     for plane in ['h','v']:
       for k in self.profiles_stat[plane].keys():
         self.profiles_stat[plane][k] = np.array(
