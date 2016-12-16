@@ -289,8 +289,7 @@ class BSRTprofiles(object):
   def clean_data(self,stdamp = 3000,verbose = True):
     """
     removes all profiles considered to be just noise, explicitly
-    profiles with:
-    1) std(self.profiles[plane][slot]['amp']) < stdamp
+    profiles with std(self.profiles[plane][slot]['amp']) < stdamp
     """
     for plane in 'h','v':
       for slot in self.profiles[plane].keys():
@@ -310,6 +309,27 @@ class BSRTprofiles(object):
                           rm_ts,invert=True)
         self.profiles[plane][slot] = self.profiles[plane][slot][rm_mask]
     return self
+  def remove_background(self,verbose):
+    """
+    Removes the background from all normalized profiles.
+    Estimate background by:
+      1) averaging the amplitude over the first and last 10 bins for
+         each bin
+      2) averaging over all profiles for each slot as background seems
+         to stay rather constant
+    """
+    if verbose:
+      print('... remove background from normalized profiles')
+    for plane in 'h','v':
+      for slot in self.profiles[plane].keys():
+        # estimate background
+        bgnavg = 10
+        ts = self.get_timestamps(slot=slot,plane=plane)
+        bg_avg_left = np.mean([ self.get_profile_norm_avg(slot=slot,
+                          time_stamp=t,plane=plane)[2][:bgnavg] for t in ts ])
+        bg_avg_right = np.mean([ self.get_profile_norm_avg(slot=slot,
+                          time_stamp=t,plane=plane)[2][-bgnavg:] for t in ts ])
+        bg_avg = (bg_avg_left+bg_avg_right)/2
   def stats(self,verbose=False):
     """
     calculate statistical parameters for the average over all profiles
