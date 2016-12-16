@@ -96,23 +96,39 @@ def median(x,w):
   x = [0.1,0.3,0.5]
   w = [1,0.5,1.5]
   median = np.median([0.1,0.1,0.3,0.5,0.5,0.5])
+         = x[index(w.cumsum() == max(w.cumsum())*0.5)]
+
+  Parameters:
+  -----------
+  x : values
+  w : weights
+
+  Returns:
+  --------
+  idx_median : index of median value
+  x[idx_median] : median
   """
-  # each value of x has to be present w times in xm where the weighted
-  # median of x is then median(xm)
-  # e.g. x = [0.1,0.3,0.5],w = [1,0.5,1.5] -> w/w.min() = [2,1,3]
-  # -> xm = [0.1,0.1,0.3,0.5,0.5,0.5]
-  #    median(x,w) = median(xm)
-  #    len(xm) = w.sum()
-  # convert to integers
-  wmin = w.min()
-  w = w/wmin
-  # for floating point numbers dividing by wmin still doesn't yield
-  # integer numbers -> just round the number
-  wlen = round(w.sum(),0)
-  cs = (x*w).cumsum()
-  cs_tot = cs[-1]
-  idx_cs_50 = np.argmin(np.abs(cs-0.5*cs_tot))
-  if wlen%2 == 1:
-    return x[idx_cs_50]
-  if wlen%2 == 0:
-    return (x[idx_cs_50]+x[idx_cs_50+1])/2.
+  # order values after x
+  z = (np.array(zip(x,w),dtype=[('x',float),('w',float)]))
+  z = np.sort(z,order='x')
+  # -- median
+  csw = (z['w']).cumsum()
+  # let w run from 0->1
+  csw = csw/csw.max()
+  idx_median = np.argmin(np.abs(csw-0.5))
+  return (z['x'])[idx_median]
+
+def mad(x,xm,w):
+  """
+  calculates the median weighted with the weights w. This is equivalent
+  to calculating the 50% value of the cumulative sum of x*w.
+
+  Example:
+  --------
+  x = [0.1,0.3,0.5]
+  w = [1,0.5,1.5]
+  median = np.median([0.1,0.1,0.3,0.5,0.5,0.5])
+         = x[index(w.cumsum() == max(w.cumsum())*0.5)]
+  """
+  xs = np.abs(x-xm)
+  return median(xs,w)
