@@ -133,8 +133,8 @@ class BSRTprofiles(object):
     else:
       self.filenames = self.records.keys()
     self.profiles = profiles
-    self.profiles_norm = profiles
-    self.profiles_norm_avg = profiles
+    self.profiles_norm = profiles_norm
+    self.profiles_norm_avg = profiles_norm_avg
     self.profiles_stat = profiles_stat
 
   @classmethod
@@ -390,6 +390,9 @@ class BSRTprofiles(object):
     -----
     profile data is assumed to be equally spaced in x
     """
+    # generate normalized profiles if missing
+    if self.profiles_norm is None:
+      self = self._norm_profiles(verbose=verbose)
     if verbose:
       if self.profiles_norm_avg is not None:
         print('... delete self.profiles_norm_avg')
@@ -467,7 +470,7 @@ class BSRTprofiles(object):
     # self.profiles_norm_avg
     self._norm_avg_profiles(verbose=verbose)
     return self
-  def remove_background(self,verbose):
+  def remove_background(self,verbose=False):
     """
     Removes the background from all normalized profiles.
     Estimate background by:
@@ -485,18 +488,50 @@ class BSRTprofiles(object):
     self : BSRTprofiles class object where the background is removed
         from all normalized profiles.
     """
+    if (self.profiles_norm is None) or (self.profiles_norm_avg is None):
+      self = self.norm()
     if verbose:
       print('... remove background from normalized profiles')
     for plane in 'h','v':
-      for slot in self.profiles[plane].keys():
+      for slot in self.profiles_norm[plane].keys():
         # estimate background
         bgnavg = 10
         ts = self.get_timestamps(slot=slot,plane=plane)
         bg_avg_left = np.mean([ self.get_profile_norm_avg(slot=slot,
-                          time_stamp=t,plane=plane)[2][:bgnavg] for t in ts ])
+                          time_stamp=t,plane=plane)['amp'][:bgnavg] 
+                          for t in ts ],axis=None)
         bg_avg_right = np.mean([ self.get_profile_norm_avg(slot=slot,
-                          time_stamp=t,plane=plane)[2][-bgnavg:] for t in ts ])
+                          time_stamp=t,plane=plane)['amp'][-bgnavg:] 
+                          for t in ts ])
         bg_avg = (bg_avg_left+bg_avg_right)/2
+        # remove it from the normalized profiles
+        self.profiles_norm[plane][slot]['amp'] = (
+            self.profiles_norm[plane][slot]['amp']-bg_avg )
+        self.profiles_norm_avg[plane][slot]['amp'] = (
+            self.profiles_norm_avg[plane][slot]['amp']-bg_avg )
+        # renormalize profiles to integral(profile)=1
+        for idx in xrange(len(self.profiles_norm[plane][slot])):
+          try:
+            prof = self.profiles_norm[plane][slot][idx]
+            # assume equal spacing
+            dx = prof['pos'][1]-prof['pos'][0]
+            prof_int = (dx*prof['amp']).sum()
+            self.profiles_norm[plane][slot][idx]['amp'] = (prof['amp']/
+                                                           prof_int)
+          except ValueError:
+            pass
+        for idx in xrange(len(self.profiles_norm_avg[plane][slot])):
+          try:
+            prof = self.profiles_norm_avg[plane][slot][idx]
+            # assume equal spacing
+            dx = prof['pos'][1]-prof['pos'][0]
+            prof_int = (dx*prof['amp']).sum()
+            self.profiles_norm_avg[plane][slot][idx]['amp'] = (prof['amp']/
+                                                           prof_int)
+          except ValueError:
+            pass
+
+    return self
   def stats(self,verbose=False):
     """
     calculate statistical parameters for the average over all profiles
@@ -518,6 +553,9 @@ class BSRTprofiles(object):
     #     1 sigma = erf(1/sqrt(2)) (68 %)
     #             = 1 - erf(1/sqrt(2)) (32%)
     cumsum_1sigma = erf(1/np.sqrt(2))
+    # generate normalized profile if missing
+    if self.profiles_norm_avg is None:
+      self.norm(verbose=verbose)
     if verbose:
       if self.profiles_stat is None:
         print('... calculate statistical parameters')
@@ -563,7 +601,9 @@ class BSRTprofiles(object):
           # close to 1
           try:
             p,pcov = curve_fit(tb.gauss_pdf,profs_norm_avg['pos'],
-                               profs_norm_avg['amp'],p0=[0,1,0,2])
+                               profs_norm_avg['amp'],p0=[0,1,0,2],
+                               bounds=([0,0,-np.inf,0],
+                                       [1,np.inf,np.inf,np.inf]))
             # error on p
             psig = [ np.sqrt(pcov[i,i]) for i in range(len(p)) ]
             c_gauss, a_gauss = p[0], p[1]
@@ -590,7 +630,7 @@ class BSRTprofiles(object):
           try:
             p,pcov = curve_fit(tb.qgauss_pdf,profs_norm_avg['pos'],
                                profs_norm_avg['amp'],
-                               bounds=([-1,0,1,-np.inf,0],
+                               bounds=([0,0,1,-np.inf,0],
                                  [1,np.inf,3,np.inf,np.inf]))
             # error on p
             psig = [ np.sqrt(pcov[i,i]) for i in range(len(p)) ]
@@ -734,7 +774,8 @@ class BSRTprofiles(object):
     returns averaged normalized profile for slot *slot*, time stamp
     *time_stamp* as unix time [ns] and plane *plane*.
     """
-    mask = self.profiles_norm_avg[plane][slot]['time_stamp'] == time_stamp
+    mask = (self.profiles_norm_avg[plane][slot]['time_stamp'] 
+                == time_stamp)
     if len(np.where(mask==True)[0]) == 1:
       return self.profiles_norm_avg[plane][slot][mask][0]
     else:
@@ -828,17 +869,17 @@ class BSRTprofiles(object):
       # plot average over profiles
       pl.plot(profs_avg['pos'],profs_avg['amp'],
               label = 'average profile',color='k',linestyle='-')
-      # plot Gaussian fit
-      pl.plot(profs[i]['pos'],tb.gauss_pdf(profs[i]['pos'],
-              c_gauss,a_gauss,cent_gauss,sigma_gauss),
-              color=fit_colors['Red'],
-              linestyle='--',linewidth=1,label='Gaussian fit')
-      # plot q-Gaussian fit
-      pl.plot(profs[i]['pos'],tb.qgauss_pdf(profs[i]['pos'],
-              c_qgauss,a_qgauss,q_qgauss,cent_qgauss,beta_qgauss),
-              color=fit_colors['DarkRed'],
-              linestyle='-',linewidth=1,label='q-Gaussian fit')
-
+      if self.profiles_stat is not None:
+        # plot Gaussian fit
+        pl.plot(profs[i]['pos'],tb.gauss_pdf(profs[i]['pos'],
+                c_gauss,a_gauss,cent_gauss,sigma_gauss),
+                color=fit_colors['Red'],
+                linestyle='--',linewidth=1,label='Gaussian fit')
+        # plot q-Gaussian fit
+        pl.plot(profs[i]['pos'],tb.qgauss_pdf(profs[i]['pos'],
+                c_qgauss,a_qgauss,q_qgauss,cent_qgauss,beta_qgauss),
+                color=fit_colors['DarkRed'],
+                linestyle='-',linewidth=1,label='q-Gaussian fit')
     return check_plot
   def plot_profile(self, slot = None, time_stamp = None, plane = 'h',
                    verbose = False):
@@ -927,15 +968,16 @@ class BSRTprofiles(object):
       dx = profs[i]['pos'][1]-profs[i]['pos'][0]
       pl.plot(profs_avg['pos'],(dx*profs_avg['amp']).cumsum(),
             label = 'average profile',color='k',linestyle='-')
-      pl.plot(profs_avg['pos'],(dx*tb.gauss_pdf(profs_avg['pos'],
-              sta['c_gauss'],sta['a_gauss'],sta['cent_gauss'],
-              sta['sigma_gauss'])).cumsum(),
-              label = 'Gaussian fit',color = fit_colors['Red'],
-              linestyle = '--')
-      pl.plot(profs_avg['pos'],(dx*tb.qgauss_pdf(profs_avg['pos'],
-              sta['c_qgauss'],sta['a_qgauss'],sta['q_qgauss'],
-              sta['cent_qgauss'],sta['beta_qgauss'])).cumsum(),label = 'Gaussian fit', 
-              color = fit_colors['DarkRed'], linestyle = '-')
+      if self.profiles_stat is not None:
+        pl.plot(profs_avg['pos'],(dx*tb.gauss_pdf(profs_avg['pos'],
+                sta['c_gauss'],sta['a_gauss'],sta['cent_gauss'],
+                sta['sigma_gauss'])).cumsum(),
+                label = 'Gaussian fit',color = fit_colors['Red'],
+                linestyle = '--')
+        pl.plot(profs_avg['pos'],(dx*tb.qgauss_pdf(profs_avg['pos'],
+                sta['c_qgauss'],sta['a_qgauss'],sta['q_qgauss'],
+                sta['cent_qgauss'],sta['beta_qgauss'])).cumsum(),label = 'Gaussian fit', 
+                color = fit_colors['DarkRed'], linestyle = '-')
       pl.xlabel('position [mm]')
       pl.ylabel(r'cumulative distribution functions [a.u.]')
       pl.ylim(-0.05,1.05)
@@ -1179,10 +1221,11 @@ class BSRTprofiles(object):
                     ncol=2, mode="expand", borderaxespad=0.,
                     fontsize=10)
       pl.gca().set_xlim(-8,8)
-    fig.subplots_adjust(top=0.3)
+    fig.subplots_adjust(top=0.38)
     fig.tight_layout()
     return flaux
-  def mk_profile_video(self, slot = None, time_stamp_ref=None,plt_dir='BSRTprofile_gifs',
+  def mk_profile_video(self, slot = None, time_stamp_ref=None,
+                       plt_dir='BSRTprofile_gifs',
                        delay=20, norm = True, export=False, 
                        verbose=False):
     """
