@@ -846,7 +846,7 @@ class BSRTprofiles(object):
                 color=profile_colors.values()[i])
         if norm:
           pl.ylabel(r'probability (integral normalized to 1) [a.u.]')
-          pl.ylim(5.e-4,0.5)
+          pl.ylim(5.e-5,0.5)
         else:
           pl.ylabel('intensity [a.u.]')
         pl.xlabel('position [mm]')
