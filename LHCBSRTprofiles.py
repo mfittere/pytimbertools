@@ -48,32 +48,39 @@ class BSRTprofiles(object):
   Attributes:
   -----------
   records : dictionary containing binary file information with the 
-            format:
-              {binary_file_name : [record_1,...,record_n]}
-            For each record the following information is saved:
-              record_* = [(offset, time_stamp, num_bunches, 
-                           num_acq_per_bunch, bunch_list, width,
-                           height, prof_h_sz, prof_v_sz, r_size),...]
-            with:
-              offset      = start position of record in the binary file
-              time_stamp  = timestamp of record in unix time [ns]
-              num_bunches = number of bunches
-              num_acq_per_bunch = number of acquisitions per bunch
-              bunch_list  = list of bunches in terms of 
-                           slotID (= #bucket/10)
-              width       = width of image
-              height      = height of image
-              prof_h_sz, prof_v_sz = size of hor./vert. profile
-              r_size      = size of record
+      format:
+        {binary_file_name : [record_1,...,record_n]}
+      For each record the following information is saved:
+        record_* = [(offset, time_stamp, num_bunches, 
+                     num_acq_per_bunch, bunch_list, width,
+                     height, prof_h_sz, prof_v_sz, r_size),...]
+      with:
+        offset      = start position of record in the binary file
+        time_stamp  = timestamp of record in unix time [ns]
+        num_bunches = number of bunches
+        num_acq_per_bunch = number of acquisitions per bunch
+        bunch_list  = list of bunches in terms of 
+                     slotID (= #bucket/10)
+        width       = width of image
+        height      = height of image
+        prof_h_sz, prof_v_sz = size of hor./vert. profile
+        r_size      = size of record
   filenames : list of binary files loaded
   profiles: dictionary containing horizontal ('h') and vertical ('v')
-            profiles with the format:
-                {slotID : profile }
-              where profile is a structured array with the following
-              fields:
-                time_stamp : time stamp in unix time [ns]
-                pos : position [um]
-                amp : amplitude of profile [a.u.]
+      profiles with the format:
+          {slotID : profile }
+        where profile is a structured array with the following
+        fields:
+          time_stamp : time stamp in unix time [ns]
+          pos : position [um]
+          amp : amplitude of profile [a.u.]
+  profiles_norm : same format as profiles. Contains all profiles are
+      normalized to represent a probability distribution with an
+      integral of 1.
+  profiles_norm_avg : same fromat as profile. Contains for each plane,
+      slot and timestamp the average of all normalized profiles for
+      this time stamp.
+
   Methods:
   --------
   plot_profile : plot profile for specific slot and timestamp    
@@ -118,14 +125,16 @@ class BSRTprofiles(object):
   def read_array_double(r, sz):
     return np.array(r.read_double(sz)[:sz])
 
-  def __init__(self, records=None, profiles=None,
-               profiles_stat=None):
+  def __init__(self, records=None, profiles=None, profiles_norm=None,
+               profiles_norm_avg=None, profiles_stat=None):
     self.records   = records
     if self.records is None:
       self.filenames = None
     else:
       self.filenames = self.records.keys()
     self.profiles = profiles
+    self.profiles_norm = profiles
+    self.profiles_norm_avg = profiles
     self.profiles_stat = profiles_stat
 
   @classmethod
@@ -279,12 +288,11 @@ class BSRTprofiles(object):
           break
       # resume file
       r.seek(0)
-    # convert to a structured array
+    # convert to a structured array and sort by time stamp
     ftype=[('time_stamp',int), ('pos',np.ndarray), ('amp',np.ndarray)]
     for plane in ['h','v']:
-      prof = profiles[plane]
-      for k in prof.keys():
-        prof[k] = np.array(prof[k], dtype=ftype)
+      for k in profiles[plane].keys():
+        profiles[plane][k] = np.array(profiles[plane][k], dtype=ftype)
     return cls(records=records, profiles=profiles)
   def clean_data(self,stdamp = 3000,verbose = True):
     """
@@ -309,6 +317,156 @@ class BSRTprofiles(object):
                           rm_ts,invert=True)
         self.profiles[plane][slot] = self.profiles[plane][slot][rm_mask]
     return self
+  def _norm_profiles(self,verbose = True):
+    """
+    Generate normalized profiles for each plane, slot and timestamp. 
+    Profiles are normalized to represent a probability distribution, 
+    explicitly:
+      norm_data = raw_data/(int(raw_data))
+    so that:
+      int(norm_data) = 1
+    The average is taken over all profiles for each plane, slot and 
+    time stamp.
+
+    Parameters:
+    -----------
+    verbose : verbose option for additional output
+
+    Returns:
+    --------
+    self : BSRTprofiles class object with recalculated 
+        self.profiles_norm (normalized profiles) and 
+
+    Note:
+    -----
+    profile data is assumed to be equally spaced in x
+    """
+    if verbose:
+      if self.profiles_norm is not None:
+        print('... delete self.profiles_norm')
+    self.profiles_norm={}
+    if verbose:
+      print('... normalize profiles. Normalized profiles are saved' +
+            ' in self.profiles_norm')
+    for plane in 'h','v':
+      self.profiles_norm[plane]={}
+      for slot in self.profiles[plane].keys():
+        self.profiles_norm[plane][slot] = []
+        for idx in xrange(len(self.profiles[plane][slot])):
+          try:
+            prof = self.profiles[plane][slot][idx].copy()
+            # assume equal spacing
+            dx = prof['pos'][1]-prof['pos'][0]
+            prof_int = (dx*prof['amp']).sum()
+            self.profiles_norm[plane][slot].append(
+                (prof['time_stamp'],np.array(prof['pos']),
+                 np.array(prof['amp']/prof_int)) )
+          except ValueError:
+            pass
+    # convert to a structured array and sort by time stamp
+    ftype=[('time_stamp',int), ('pos',np.ndarray), ('amp',np.ndarray)]
+    for plane in ['h','v']:
+      for k in self.profiles_norm[plane].keys():
+        self.profiles_norm[plane][k] = np.array(
+            self.profiles_norm[plane][k], dtype=ftype)
+    return self
+  def _norm_avg_profiles(self,verbose = True):
+    """
+    Generate average of normalized profiles for each
+    plane, slot and timestamp. The average is taken over all profiles 
+    for each plane, slot and 
+    time stamp.
+
+    Parameters:
+    -----------
+    verbose : verbose option for additional output
+
+    Returns:
+    --------
+    self : BSRTprofiles class object with recalculated 
+        self.profiles_norm_avg (average normalized profile)
+
+    Note:
+    -----
+    profile data is assumed to be equally spaced in x
+    """
+    if verbose:
+      if self.profiles_norm_avg is not None:
+        print('... delete self.profiles_norm_avg')
+    self.profiles_norm_avg={}
+    if verbose:
+      print('... average normalized profiles. Averaged normalized ' +
+            'profiles are saved in self.profiles_norm_avg')
+    for plane in 'h','v':
+      self.profiles_norm_avg[plane]={}
+      for slot in self.profiles_norm[plane].keys():
+        self.profiles_norm_avg[plane][slot]=[]
+        ts = self.get_timestamps(slot=slot,plane=plane)
+        for time_stamp in ts:
+          profs = self.get_profile_norm(plane=plane,slot=slot,
+                                         time_stamp=time_stamp)
+          # no profiles found -> skip
+          if len(profs) == 0:
+            if verbose:
+              print('slot %s or timestamp %s not found'%(slot,time_stamp))
+            continue
+          # one profile
+          elif len(profs) == 1:
+            profs_avg = profs[0].copy()
+          # more than one profile
+          elif len(profs) > 1:
+            # take the average over the profiles
+            # 1) check that x-axis are the same
+            check_x = 0
+            for i in xrange(len(profs)):
+              if (np.abs(profs[0]['pos']-profs[1]['pos'])).sum() != 0:
+                check_x +=1
+            #     check_x = 0 if x-axis of profiles are the same
+            #     check_x > 0 if x-axis differ
+            if check_x ==0:
+              # 2) take the average. Integral is normalized to 1
+              #    -> to normalize avg divide by number of profiles
+              profs_avg = profs[0].copy()
+              profs_avg['amp'] = profs['amp'].sum(axis=0)/len(profs)
+          self.profiles_norm_avg[plane][slot].append((int(time_stamp),
+              profs_avg['pos'],profs_avg['amp']))
+    # convert to a structured array and sort by time stamp
+    ftype=[('time_stamp',int), ('pos',np.ndarray), ('amp',np.ndarray)]
+    for plane in ['h','v']:
+      for k in self.profiles_norm_avg[plane].keys():
+        self.profiles_norm_avg[plane][k] = np.array(
+            self.profiles_norm_avg[plane][k], dtype=ftype)
+    return self
+  def norm(self,verbose = True):
+    """
+    Generate normalized and average of normalized profiles for each
+    plane, slot and timestamp. Profiles are normalized to represent a 
+    probability distribution, explicitly:
+      norm_data = raw_data/(int(raw_data))
+    so that:
+      int(norm_data) = 1
+    The average is taken over all profiles for each plane, slot and 
+    time stamp.
+
+    Parameters:
+    -----------
+    verbose : verbose option for additional output
+
+    Returns:
+    --------
+    self : BSRTprofiles class object with recalculated 
+        self.profiles_norm (normalized profiles) and 
+        self.profiles_norm_avg (average normalized profile)
+
+    Note:
+    -----
+    profile data is assumed to be equally spaced in x
+    """
+    # self.profiles_norm
+    self._norm_profiles(verbose=verbose)
+    # self.profiles_norm_avg
+    self._norm_avg_profiles(verbose=verbose)
+    return self
   def remove_background(self,verbose):
     """
     Removes the background from all normalized profiles.
@@ -317,6 +475,15 @@ class BSRTprofiles(object):
          each bin
       2) averaging over all profiles for each slot as background seems
          to stay rather constant
+
+    Parameters:
+    -----------
+    verbose : verbose option for additional output
+
+    Returns:
+    --------
+    self : BSRTprofiles class object where the background is removed
+        from all normalized profiles.
     """
     if verbose:
       print('... remove background from normalized profiles')
@@ -334,6 +501,15 @@ class BSRTprofiles(object):
     """
     calculate statistical parameters for the average over all profiles
     for each timestamp.
+
+    Parameters:
+    -----------
+    verbose : verbose option for additional output
+
+    Returns:
+    --------
+    self : BSRTprofiles class object with recalculated 
+        self.profiles_stat
     """
     # constants for cumulative distribution later
     # - mean = 50 % of cumulative distribution
@@ -505,7 +681,21 @@ class BSRTprofiles(object):
             # background estimate
             bg_avg_left,bg_avg_right,bg_avg))
     # convert to a structured array
-    ftype=[('time_stamp',int),('c_gauss',float),('a_gauss',float),('cent_gauss',float),('sigma_gauss',float),('c_gauss_err',float),('a_gauss_err',float),('cent_gauss_err',float),('sigma_gauss_err',float),('c_qgauss',float),('a_qgauss',float),('q_qgauss',float),('cent_qgauss',float),('beta_qgauss',float),('sigma_qgauss',float),('c_qgauss_err',float),('a_qgauss_err',float),('q_qgauss_err',float),('cent_qgauss_err',float),('beta_qgauss_err',float),('sigma_qgauss_err',float),('cent_stat',float),('sigma_stat',float),('cent_median',float),('mad',float),('sigma_median',float),('cent_cumsum',float),('sigma_cumsum_32',float),('sigma_cumsum_68',float),('cent_peak',float),('bg_avg_left',float),('bg_avg_right',float),('bg_avg',float)]
+    ftype=[('time_stamp',int),('c_gauss',float),('a_gauss',float),
+           ('cent_gauss',float),('sigma_gauss',float),
+           ('c_gauss_err',float),('a_gauss_err',float),
+           ('cent_gauss_err',float),('sigma_gauss_err',float),
+           ('c_qgauss',float),('a_qgauss',float),('q_qgauss',float),
+           ('cent_qgauss',float),('beta_qgauss',float),
+           ('sigma_qgauss',float),('c_qgauss_err',float),
+           ('a_qgauss_err',float),('q_qgauss_err',float),
+           ('cent_qgauss_err',float),('beta_qgauss_err',float),
+           ('sigma_qgauss_err',float),('cent_stat',float),
+           ('sigma_stat',float),('cent_median',float),('mad',float),
+           ('sigma_median',float),('cent_cumsum',float),
+           ('sigma_cumsum_32',float),('sigma_cumsum_68',float),
+           ('cent_peak',float),('bg_avg_left',float),
+           ('bg_avg_right',float),('bg_avg',float)]
     for plane in ['h','v']:
       for k in self.profiles_stat[plane].keys():
         self.profiles_stat[plane][k] = np.array(
@@ -523,77 +713,42 @@ class BSRTprofiles(object):
     unix time [ns] and plane *plane*
     """
     mask = self.profiles[plane][slot]['time_stamp'] == time_stamp
-    return self.profiles[plane][slot][mask]
+    if len(np.where(mask==True))[0] == 1:
+      return self.profiles[plane][slot][mask][0]
+    else:
+      return self.profiles[plane][slot][mask]
   def get_profile_norm(self, slot = None, time_stamp = None, 
                        plane = 'h'):
     """
     get normalized profile data for slot *slot*, time stamp
-    *time_stamp* as unix time [ns] and plane *plane*. Profiles are 
-    normalized to represent a probability distribution, explicitly:
-      norm_data = raw_data/(int(raw_data))
-    so that:
-      int(norm_data) = 1
-    
-    Note:
-    -----
-    profile data is assumed to be equally spaced in x
+    *time_stamp* as unix time [ns] and plane *plane*.
     """
-    profs = self.get_profile(slot=slot,time_stamp=time_stamp,
-                             plane=plane) 
-    for i in xrange(len(profs)):
-      # assume equal spacing
-      try:
-        dx = profs[i]['pos'][1]-profs[i]['pos'][0]
-        prof_int = (dx*profs[i]['amp']).sum()
-        profs[i]['amp'] = profs[i]['amp']/prof_int
-      except ValueError:
-        if verbose:
-          print('ERROR: no data found for slot %s, '%(slot) +
-          'profile %s, time stamp %s.'%(i,time_stamp) +
-          ' len(x) =%s, len(y) = %s'%(len(profs[i]['pos']),
-           len(profs[i]['amp'])))
-          pass
-    return profs
+    mask = self.profiles_norm[plane][slot]['time_stamp'] == time_stamp
+    if len(np.where(mask==True)[0]) == 1:
+      return self.profiles_norm[plane][slot][mask][0]
+    else:
+      return self.profiles_norm[plane][slot][mask]
   def get_profile_norm_avg(self, slot = None, time_stamp = None,
                            plane = 'h'):                                    
     """
     returns averaged normalized profile for slot *slot*, time stamp
     *time_stamp* as unix time [ns] and plane *plane*.
     """
-    #select profile for slot and time stamp
-    profs = self.get_profile_norm(slot=slot,time_stamp=time_stamp,
-                                 plane=plane)
-    # no profiles found
-    if len(profs) == 0:
-      raise ValueError('slot or timestamp not found')
-    # one profile
-    if len(profs) == 1:
-      profs_avg = profs[0].copy()
-      return profs_avg
-    # more than one profile
-    # take the average over the profiles
-    # 1) check that x-axis are the same
-    check_x = 0
-    for i in xrange(len(profs)):
-      if (np.abs(profs[0]['pos']-profs[1]['pos'])).sum() != 0:
-        check_x +=1
-    #     check_x = 0 if x-axis of profiles are the same
-    #     check_x > 0 if x-axis differ
-    if check_x ==0: 
-      # 2) take the average. Integral is normalized to 1
-      #    -> to normalize avg divide by number of profiles
-      profs_avg = profs[0].copy() 
-      profs_avg['amp'] = profs['amp'].sum(axis=0)/len(profs)
-      return profs_avg
+    mask = self.profiles_norm_avg[plane][slot]['time_stamp'] == time_stamp
+    if len(np.where(mask==True)[0]) == 1:
+      return self.profiles_norm_avg[plane][slot][mask][0]
     else:
-      return None
+      return self.profiles_norm_avg[plane][slot][mask]
   def get_profile_stat(self, slot = None, time_stamp = None, plane = 'h'):
     """
     get profile data for slot *slot*, time stamp *time_stamp* as
     unix time [ns] and plane *plane*
     """
     mask = self.profiles_stat[plane][slot]['time_stamp'] == time_stamp
-    return self.profiles_stat[plane][slot][mask]
+    if len(np.where(mask==True)[0]) == 1:
+      return self.profiles_stat[plane][slot][mask][0]
+    else:
+      return self.profiles_stat[plane][slot][mask]
   def _plot_profile(self, slot = None, time_stamp = None, plane = 'h',
                     norm = True, verbose = False):
     """
