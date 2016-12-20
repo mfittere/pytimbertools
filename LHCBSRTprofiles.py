@@ -80,6 +80,8 @@ class BSRTprofiles(object):
   profiles_norm_avg : same fromat as profile. Contains for each plane,
       slot and timestamp the average of all normalized profiles for
       this time stamp.
+  profiles_stat: statistical parameters calculated for average profile
+      for each timestamp
 
   Methods:
   --------
@@ -136,7 +138,13 @@ class BSRTprofiles(object):
     self.profiles_norm = profiles_norm
     self.profiles_norm_avg = profiles_norm_avg
     self.profiles_stat = profiles_stat
-
+    if self.profiles_stat is None:
+      self.profiles_stat_var = None
+    else:
+      # take first plane and slot in order to get profile_stat named fields
+      plane_aux = self.profiles_stat.keys()[0]
+      slot_aux = self.profiles_stat[plane_aux].keys()[0] 
+      self.profiles_stat_var = self.profiles_stat[plane_aux][slot_aux].dtype.names
   @classmethod
   def load_files(cls,files=None,verbose=True):
     """
@@ -740,7 +748,20 @@ class BSRTprofiles(object):
       for k in self.profiles_stat[plane].keys():
         self.profiles_stat[plane][k] = np.array(
           self.profiles_stat[plane][k], dtype=ftype)
+    # variable for statistical variable names
+    self.profiles_stat_var = [ ftype[k][0] for k in xrange(len(ftype)) ]
     return self
+  def get_slots(self):
+    """
+    get sorted list of slot numbers
+    """
+    slotsh = np.sort(list(set(self.profiles['h'].keys())))
+    slotsv = np.sort(list(set(self.profiles['v'].keys())))
+    if np.all(slotsh == slotsv):
+      return slotsh
+    else:
+      print('WARNING: slot numbers in H and V differ!')
+      return (slotsh,slotsv)
   def get_timestamps(self, slot = None, plane = 'h'):
     """
     get all time stamps in unix time [ns] for slot *slot* and
@@ -753,7 +774,7 @@ class BSRTprofiles(object):
     unix time [ns] and plane *plane*
     """
     mask = self.profiles[plane][slot]['time_stamp'] == time_stamp
-    if len(np.where(mask==True))[0] == 1:
+    if len(np.where(mask==True)[0]) == 1:
       return self.profiles[plane][slot][mask][0]
     else:
       return self.profiles[plane][slot][mask]
@@ -1224,7 +1245,7 @@ class BSRTprofiles(object):
     fig.subplots_adjust(top=0.38)
     fig.tight_layout()
     return flaux
-  def mk_profile_video(self, slot = None, time_stamp_ref=None,
+  def mk_profile_video(self, slot = None, t1=None, t2=None,
                        plt_dir='BSRTprofile_gifs',
                        delay=20, norm = True, export=False, 
                        verbose=False):
@@ -1236,6 +1257,8 @@ class BSRTprofiles(object):
     slot : slot or list of slots of slots. If slot = None all slots
            are selected. In case of several slot, on video is 
            generated per slot
+    t1 : start time, if None first time stamp for slot is used
+    t2 : end time, if None last time stamp for slot is used
     plt_dir : directory to save videos
     delay : option for convert to define delay between pictures
     norm : if norm = false raw profiles are plotted
@@ -1268,6 +1291,18 @@ class BSRTprofiles(object):
         if verbose:
           print('... generating plots for slot %s'%slot)
         time_stamps = self.get_timestamps(slot=slot,plane=plane)
+        if t1 is None:
+          t1 = time_stamps[0]
+        if t2 is None:
+          t2 = time_stamps[-1]
+        time_stamps = time_stamps[(time_stamps >= t1) & 
+                                  (time_stamps <= t2)]
+        if len(time_stamps) > 0:
+          time_stamp_ref = time_stamps[0]
+        else:
+          if verbose:
+            print('WARNING: no time stamps found for slot %s, '%slot +
+                  'plane %s and (t1,t2)=(%s,%s)'%(plane,t1,t2))
         pngcount = 0
         if verbose: 
           print( '... total number of profiles %s'%(len(time_stamps)))
@@ -1285,11 +1320,13 @@ class BSRTprofiles(object):
           pl.savefig(fnpl)
           pngcount += 1
         # create video from pngs
-        if verbose: print '... creating .gif file with convert'
-        cmd="convert -delay %s %s %s"%(delay,
-             os.path.join(tmpdir,'slot_%s_plane_%s_*.png'%(slot,plane)),
-             os.path.join(plt_dir,'slot_%s_plane_%s.gif'%(slot,plane)))
-        os.system(cmd)
+        if len(time_stamps) > 0:
+          if verbose:
+            print '... creating .gif file with convert'
+          cmd="convert -delay %s %s %s"%(delay,
+               os.path.join(tmpdir,'slot_%s_plane_%s_*.png'%(slot,plane)),
+               os.path.join(plt_dir,'slot_%s_plane_%s.gif'%(slot,plane)))
+          os.system(cmd)
         # delete png files already
         if (export is False) and (os.path.exists(tmpdir) is True):
           shutil.rmtree(tmpdir)
