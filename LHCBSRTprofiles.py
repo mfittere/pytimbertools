@@ -7,9 +7,10 @@ try:
   import matplotlib.pyplot as pl
   from scipy.optimize import curve_fit
   from scipy.special import erf
+  from statsmodels.nonparametric.smoothers_lowess import lowess
 except ImportError:
-  print('No module found: numpy, matplotlib and scipy modules ' +
-        'should be present to run pytimbertools')
+  print('No module found: numpy, matplotlib, scipy modules and ' +
+        'statsmodels should be present to run pytimbertools')
 import os
 import shutil
 import glob
@@ -540,13 +541,27 @@ class BSRTprofiles(object):
             pass
 
     return self
-  def stats(self,verbose=False):
+  def _set_slots(self,plane,slots):
+    """
+    set slot numbers, handles the case of slots = None and only one 
+    slot.
+    """
+    # 1) all slots
+    if slots is None:
+      slots = self.profiles[plane].keys()
+    # 2) if single slot 
+    elif not hasattr(slots,"__iter__"):
+      slots = [slot]
+    return np.sort(slots,axis=None)
+  def stats(self,slots=None,force=False,verbose=False):
     """
     calculate statistical parameters for the average over all profiles
     for each timestamp.
 
     Parameters:
     -----------
+    slot: slot numbers (single value or list)
+    force: force recalculation
     verbose : verbose option for additional output
 
     Returns:
@@ -564,20 +579,27 @@ class BSRTprofiles(object):
     # generate normalized profile if missing
     if self.profiles_norm_avg is None:
       self.norm(verbose=verbose)
+    # initialize if data is empty
+    if self.profiles_stat is None:
+      self.profiles_stat={}
+      self.profiles_stat['h']={}
+      self.profiles_stat['v']={}
     if verbose:
-      if self.profiles_stat is None:
-        print('... calculate statistical parameters')
-      else:
+      if force is False:
+        print('... calculate statistical parameters.')
+      elif force is True:
         print('... delete old data and recalculate statistical ' + 
             'parameters')
-    self.profiles_stat={}
     for plane in ['h','v']:
       if verbose:
         print('... start plane %s'%plane.upper())
-      self.profiles_stat[plane]={}
-      for slot in self.profiles[plane].keys():
+      for slot in self._set_slots(plane=plane,slots=slots):
         if verbose:
           print('... start slot %s'%slot)
+        # 1) data is already calculated + force = False-> go to next slot
+        if (slot in self.profiles_stat[plane].keys()) and (force is False):
+          continue
+        # 2) calculate/recalculate statistical parameters
         self.profiles_stat[plane][slot] = []
         for time_stamp in self.get_timestamps(slot=slot, plane=plane):
           # average profile
@@ -784,6 +806,10 @@ class BSRTprofiles(object):
     get normalized profile data for slot *slot*, time stamp
     *time_stamp* as unix time [ns] and plane *plane*.
     """
+    ts = self.get_timestamps(slot=slot,plane=plane)
+    if time_stamp not in ts:
+      raise ValueError('time stamp %s '%(time_stamp) + 'is not in ' +
+          'list of time stamps for slot %s and plane %s'%(slot,plane))
     mask = self.profiles_norm[plane][slot]['time_stamp'] == time_stamp
     if len(np.where(mask==True)[0]) == 1:
       return self.profiles_norm[plane][slot][mask][0]
@@ -812,7 +838,7 @@ class BSRTprofiles(object):
     else:
       return self.profiles_stat[plane][slot][mask]
   def _plot_profile(self, slot = None, time_stamp = None, plane = 'h',
-                    norm = True, verbose = False):
+                    norm = True, smooth = True, verbose = False):
     """
     Plot all profiles for specific slot and time. Plot title displays 
     'Europe/Zurich' time.
@@ -828,6 +854,8 @@ class BSRTprofiles(object):
                         norm_data = raw_data/(int(raw_data))
                      so that:
                         int(norm_data) = 1
+    smooth: if True the averaged profiles are smoothed using lowess
+            function from the statsmodels module
     verbose : verbose option for additional output
 
     Returns:
@@ -887,6 +915,14 @@ class BSRTprofiles(object):
         check_plot = False
         pass
     if norm and check_plot:
+      # smooth data
+      if smooth:
+        #profs_avg['pos'],profs_avg['amp'] = 
+        prof_smooth = lowess(endog=profs_avg['amp'],
+            exog=profs_avg['pos'],frac=0.025,it=3,delta=0,
+            is_sorted=True,missing='drop')
+        profs_avg['pos'] = prof_smooth[:,0]
+        profs_avg['amp'] = prof_smooth[:,1]
       # plot average over profiles
       pl.plot(profs_avg['pos'],profs_avg['amp'],
               label = 'average profile',color='k',linestyle='-')
@@ -1050,7 +1086,8 @@ class BSRTprofiles(object):
             plane=plane, verbose=verbose)
   def _plot_residual_ratio(self, flag, flagprof, slot = None,
                            time_stamp = None, time_stamp_ref = None, 
-                           plane = 'h', verbose = False):
+                           plane = 'h', smooth = False,
+                           verbose = False):
     """
     Plot residual or ratio of normalized profiles for a specific slot and time.
     Plot title displays 'Europe/Zurich' time.
@@ -1175,7 +1212,7 @@ class BSRTprofiles(object):
     return check_plot
   def plot_all(self,slot = None, time_stamp = None,
                time_stamp_ref = None, plane = 'h', norm = True, 
-               verbose = False):
+               smooth = True, verbose = False):
     """
     plot normalized or raw data profiles, cumulative distribution 
     function, residual and ratio in respect to reference distribution
@@ -1193,6 +1230,8 @@ class BSRTprofiles(object):
                         norm_data = raw_data/(int(raw_data))
                      so that:
                         int(norm_data) = 1
+    smooth: if True the averaged profiles are smoothed using lowess
+            function from the statsmodels module
     verbose : verbose option for additional output
     
     Returns:
@@ -1212,7 +1251,8 @@ class BSRTprofiles(object):
     pl.subplot(223)
     # flaux = flag for checking if profile plots have failed
     flaux = self._plot_profile(slot=slot,time_stamp=time_stamp,
-                              plane=plane,norm=norm,verbose=verbose)
+                              plane=plane,norm=norm,smooth=smooth,
+                              verbose=verbose)
     pl.gca().set_yscale('log')
     if norm:
       pl.gca().set_ylabel('probability [a.u.]')
@@ -1225,13 +1265,15 @@ class BSRTprofiles(object):
     pl.subplot(221)
     self._plot_residual_ratio(flag='residual', flagprof='avg', 
            slot=slot, time_stamp=time_stamp,
-           time_stamp_ref=time_stamp_ref, plane=plane, verbose=verbose)
+           time_stamp_ref=time_stamp_ref, plane=plane, smooth=smooth,
+           verbose=verbose)
     pl.gca().set_ylim(-0.05,0.05)
 #     4) ratio
     pl.subplot(222)
     self._plot_residual_ratio(flag='ratio', flagprof='avg', 
            slot=slot, time_stamp=time_stamp,
-           time_stamp_ref=time_stamp_ref, plane=plane, verbose=verbose)
+           time_stamp_ref=time_stamp_ref, plane=plane, smooth=smooth,
+           verbose=verbose)
     pl.gca().set_ylim(-1,6)
     # remove subplot titles, shring legend size and put it on top of
     # the subplot
@@ -1245,7 +1287,7 @@ class BSRTprofiles(object):
     fig.subplots_adjust(top=0.38)
     fig.tight_layout()
     return flaux
-  def mk_profile_video(self, slot = None, t1=None, t2=None,
+  def mk_profile_video(self, slots = None, t1=None, t2=None,
                        plt_dir='BSRTprofile_gifs',
                        delay=20, norm = True, export=False, 
                        verbose=False):
@@ -1276,12 +1318,7 @@ class BSRTprofiles(object):
     for plane in ['h','v']:
       # set slot and plane, initialize variables
       check_plot[plane] = {}
-      # 1) all slots
-      if slot is None:
-        slots = self.profiles[plane].keys()
-      # 2) if single slot 
-      elif not hasattr(slot,"__iter__"):
-        slots = [slot]
+      slots = self._set_slots(plane=plane,slots=slots)
       # generate the figure and subplot
       pl.figure(plane)
       for slot in slots:
