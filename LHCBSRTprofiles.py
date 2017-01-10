@@ -14,7 +14,6 @@ except ImportError:
 import os
 import shutil
 import glob
-# from statsmodels.nonparametric.smoothers_lowess import lowess
 from matplotlib import gridspec
 
 import BinaryFileIO as bio
@@ -551,7 +550,7 @@ class BSRTprofiles(object):
       slots = self.profiles[plane].keys()
     # 2) if single slot 
     elif not hasattr(slots,"__iter__"):
-      slots = [slot]
+      slots = [slots]
     return np.sort(slots,axis=None)
   def stats(self,slots=None,force=False,verbose=False):
     """
@@ -838,7 +837,7 @@ class BSRTprofiles(object):
     else:
       return self.profiles_stat[plane][slot][mask]
   def _plot_profile(self, slot = None, time_stamp = None, plane = 'h',
-                    norm = True, smooth = True, verbose = False):
+                    norm = True, smooth = 0.025, verbose = False):
     """
     Plot all profiles for specific slot and time. Plot title displays 
     'Europe/Zurich' time.
@@ -854,8 +853,10 @@ class BSRTprofiles(object):
                         norm_data = raw_data/(int(raw_data))
                      so that:
                         int(norm_data) = 1
-    smooth: if True the averaged profiles are smoothed using lowess
-            function from the statsmodels module
+    smooth: parameter to smooth (only!) average profiles with lowess.
+            smooth = 0: no smoothing
+            smooth > 0: 'frac' parameter in lowess (Between 0 and 1.
+            The fraction of the data used when estimating each y-value.)
     verbose : verbose option for additional output
 
     Returns:
@@ -915,11 +916,9 @@ class BSRTprofiles(object):
         check_plot = False
         pass
     if norm and check_plot:
-      # smooth data
-      if smooth:
-        #profs_avg['pos'],profs_avg['amp'] = 
+      if (smooth > 0) and (smooth < 1):
         prof_smooth = lowess(endog=profs_avg['amp'],
-            exog=profs_avg['pos'],frac=0.025,it=3,delta=0,
+            exog=profs_avg['pos'],frac=smooth,it=3,delta=0,
             is_sorted=True,missing='drop')
         profs_avg['pos'] = prof_smooth[:,0]
         profs_avg['amp'] = prof_smooth[:,1]
@@ -928,12 +927,12 @@ class BSRTprofiles(object):
               label = 'average profile',color='k',linestyle='-')
       if self.profiles_stat is not None:
         # plot Gaussian fit
-        pl.plot(profs[i]['pos'],tb.gauss_pdf(profs[i]['pos'],
+        pl.plot(profs_avg['pos'],tb.gauss_pdf(profs_avg['pos'],
                 c_gauss,a_gauss,cent_gauss,sigma_gauss),
                 color=fit_colors['Red'],
                 linestyle='--',linewidth=1,label='Gaussian fit')
         # plot q-Gaussian fit
-        pl.plot(profs[i]['pos'],tb.qgauss_pdf(profs[i]['pos'],
+        pl.plot(profs_avg['pos'],tb.qgauss_pdf(profs_avg['pos'],
                 c_qgauss,a_qgauss,q_qgauss,cent_qgauss,beta_qgauss),
                 color=fit_colors['DarkRed'],
                 linestyle='-',linewidth=1,label='q-Gaussian fit')
@@ -1085,12 +1084,11 @@ class BSRTprofiles(object):
             time_stamp=time_stamp, time_stamp_ref=time_stamp_ref,
             plane=plane, verbose=verbose)
   def _plot_residual_ratio(self, flag, flagprof, slot = None,
-                           time_stamp = None, time_stamp_ref = None, 
-                           plane = 'h', smooth = False,
-                           verbose = False):
+          time_stamp = None, slot_ref = None, time_stamp_ref = None, 
+          plane = 'h', smooth = 0.025, verbose = False):
     """
-    Plot residual or ratio of normalized profiles for a specific slot and time.
-    Plot title displays 'Europe/Zurich' time.
+    Plot residual or ratio of normalized profiles for a specific slot 
+    and time. Plot title displays 'Europe/Zurich' time.
 
     Parameters:
     -----------
@@ -1100,9 +1098,15 @@ class BSRTprofiles(object):
               flagprof = 'avg' plot only average profile
     slot : slot number
     time_stamp : time stamp in unix time [ns]
+    slot_ref: slot number of reference bunch, if slot_ref = None use
+              *slot* as reference slot
     time_stamp_ref : reference time stamp in unix time [ns], if None
-                     use first time stamp
+                     use first time stamp of slot *slot_ref*
     plane : plane of profile, either 'h' or 'v'
+    smooth: parameter to smooth (only!) the average profile with lowess.
+            smooth = 0: no smoothing
+            smooth > 0: 'frac' parameter in lowess (Between 0 and 1.
+            The fraction of the data used when estimating each y-value.)
     verbose : verbose option for additional output
 
     Returns:
@@ -1110,21 +1114,33 @@ class BSRTprofiles(object):
     check_plot : bool, flag if profile plot failed 
                  (used for mk_profile_video)
     """
-    # if time_stamp_ref = None use first timestamp
+    if slot_ref is None:
+      slot_ref = slot
     if time_stamp_ref is None:
-      time_stamp_ref = self.get_timestamps(slot=slot,plane=plane)[0]
+      time_stamp_ref = self.get_timestamps(slot=slot_ref,plane=plane)[0]
     # select profile for slot and time stamp
     # individual profiles
     if flagprof == 'all':
       profs         = self.get_profile_norm(slot=slot,
                              time_stamp=time_stamp, plane=plane)
-      profs_ref     = self.get_profile_norm(slot=slot,
+      profs_ref     = self.get_profile_norm(slot=slot_ref,
                              time_stamp=time_stamp_ref, plane=plane)
     # average profiles
     profs_avg     = self.get_profile_norm_avg(slot=slot,
                            time_stamp=time_stamp, plane=plane)
-    profs_ref_avg = self.get_profile_norm_avg(slot=slot,
+    profs_ref_avg = self.get_profile_norm_avg(slot=slot_ref,
                            time_stamp=time_stamp_ref, plane=plane)
+    # smooth profiles
+    if (smooth > 0) and (smooth < 1):
+      for pp in [profs_avg,profs_ref_avg]:
+        prof_smooth = lowess(endog=pp['amp'],
+            exog=pp['pos'],frac=smooth,it=3,delta=0,
+            is_sorted=True,missing='drop')
+        pp['pos'] = prof_smooth[:,0]
+        pp['amp'] = prof_smooth[:,1]
+    else:
+      print('ERROR in _plot_residual_ratio: smooth parameters has to' +
+      'between 0 and 1! smooth = %s'%smooth)
     # take only values for which x-range of profile coincides
     xval = list(set(profs_avg['pos']) and set(profs_ref_avg['pos']))
     mask = np.array([ pos in xval for pos in profs_avg['pos'] ],
@@ -1210,9 +1226,9 @@ class BSRTprofiles(object):
       pl.gca().set_title('slot %s, %s plane, %s'%(slot,
                                plane.upper(),ts))
     return check_plot
-  def plot_all(self,slot = None, time_stamp = None,
+  def plot_all(self,slot = None, time_stamp = None, slot_ref = None,
                time_stamp_ref = None, plane = 'h', norm = True, 
-               smooth = True, verbose = False):
+               smooth = 0.025, verbose = False):
     """
     plot normalized or raw data profiles, cumulative distribution 
     function, residual and ratio in respect to reference distribution
@@ -1221,8 +1237,8 @@ class BSRTprofiles(object):
     -----------
     slot : slot number
     time_stamp : time stamp in unix time [ns]
-    time_stamp_ref : reference time stamp in unix time [ns], if None
-                     use first time stamp
+    slot_ref : reference slot, if None the same slot is used
+    time_stamp_ref : time stamp in unix time [ns] of reference slot
     plane : plane of profile, either 'h' or 'v'
     norm : if norm = False raw profiles are plotted
            if norm = True profiles are normalized to represent a 
@@ -1230,8 +1246,10 @@ class BSRTprofiles(object):
                         norm_data = raw_data/(int(raw_data))
                      so that:
                         int(norm_data) = 1
-    smooth: if True the averaged profiles are smoothed using lowess
-            function from the statsmodels module
+    smooth: parameter to smooth profiles with lowess.
+            smooth = 0: no smoothing
+            smooth > 0: 'frac' parameter in lowess (Between 0 and 1.
+            The fraction of the data used when estimating each y-value.)
     verbose : verbose option for additional output
     
     Returns:
@@ -1244,9 +1262,11 @@ class BSRTprofiles(object):
     for i in xrange(nsub):
       fig.add_subplot(2,2,i+1)
     ts = ld.dumpdate(t=time_stamp*1.e-9,
-             fmt='%Y-%m-%d %H:%M:%S.SSS',zone='cern')
-    pl.suptitle('slot %s, %s plane, %s'%(slot,
-                             plane.upper(),ts))
+             fmt='%Y-%m-%d %H:%M:%S',zone='cern')
+    ts_ref = ld.dumpdate(t=time_stamp_ref*1.e-9,
+             fmt='%Y-%m-%d %H:%M:%S',zone='cern')
+    pl.suptitle('%s plane, slot %s - %s, '%(plane.upper(),slot,ts) +
+                'ref slot %s - %s'%(slot_ref,ts_ref))
     # 1) profile plot
     pl.subplot(223)
     # flaux = flag for checking if profile plots have failed
@@ -1264,14 +1284,14 @@ class BSRTprofiles(object):
 #     3) residual, only average profile
     pl.subplot(221)
     self._plot_residual_ratio(flag='residual', flagprof='avg', 
-           slot=slot, time_stamp=time_stamp,
+           slot=slot, time_stamp=time_stamp, slot_ref=slot_ref,
            time_stamp_ref=time_stamp_ref, plane=plane, smooth=smooth,
            verbose=verbose)
     pl.gca().set_ylim(-0.05,0.05)
 #     4) ratio
     pl.subplot(222)
     self._plot_residual_ratio(flag='ratio', flagprof='avg', 
-           slot=slot, time_stamp=time_stamp,
+           slot=slot, time_stamp=time_stamp, slot_ref=slot_ref,
            time_stamp_ref=time_stamp_ref, plane=plane, smooth=smooth,
            verbose=verbose)
     pl.gca().set_ylim(-1,6)
@@ -1284,13 +1304,13 @@ class BSRTprofiles(object):
                     ncol=2, mode="expand", borderaxespad=0.,
                     fontsize=10)
       pl.gca().set_xlim(-8,8)
-    fig.subplots_adjust(top=0.38)
+    fig.subplots_adjust(top=0.30)
     fig.tight_layout()
     return flaux
   def mk_profile_video(self, slots = None, t1=None, t2=None,
-                       plt_dir='BSRTprofile_gifs',
-                       delay=20, norm = True, export=False, 
-                       verbose=False):
+                       slot_ref=None, norm = True, smooth=0.025,
+                       plt_dir='BSRTprofile_gifs', delay=20, 
+                       export=False,verbose=False):
     """
     Generates a video of the profiles of slot with *slot*
 
@@ -1299,16 +1319,30 @@ class BSRTprofiles(object):
     slot : slot or list of slots of slots. If slot = None all slots
            are selected. In case of several slot, on video is 
            generated per slot
-    t1 : start time, if None first time stamp for slot is used
-    t2 : end time, if None last time stamp for slot is used
-    plt_dir : directory to save videos
-    delay : option for convert to define delay between pictures
+    slot_ref: reference slot number
+           slot_ref = None: the first time stamp of the same slot *slot*
+               is used as reference
+           slot_ref = integer: slot number *slot_ref* is used as
+               reference and the time stamps closest to the time stamps
+               of slot *slot* are used for reference (note that the 
+               timestamps are then not exactly the same as BSRT loops 
+               through bunches when taking data)
+    t1 : start time in unix time [ns], if None first time stamp for
+         slot is used
+    t2 : end time in unix time [ns], if None last time stamp for slot
+         is used
     norm : if norm = false raw profiles are plotted
            if norm = True profiles are normalized to represent a 
                      probability distribution, explicitly:
                         norm_data = raw_data/(int(raw_data))
                      so that:
                         int(norm_data) = 1
+    smooth: parameter to smooth profiles with lowess.
+            smooth = 0: no smoothing
+            smooth > 0: 'frac' parameter in lowess (Between 0 and 1.
+            The fraction of the data used when estimating each y-value.)
+    plt_dir : directory to save videos
+    delay : option for convert to define delay between pictures
     export : If True do not delete png files
     verbose : verbose option for additional output
     """
@@ -1334,21 +1368,40 @@ class BSRTprofiles(object):
           t2 = time_stamps[-1]
         time_stamps = time_stamps[(time_stamps >= t1) & 
                                   (time_stamps <= t2)]
-        if len(time_stamps) > 0:
+        if (len(time_stamps) == 0) and verbose:                                                 
+          print('WARNING: no time stamps found for slot %s, '%slot +
+                'plane %s and (t1,t2)=(%s,%s)'%(plane,t1,t2))
+          continue       
+        if slot_ref is None:
           time_stamp_ref = time_stamps[0]
+        elif slot_ref in self.get_slots():
+          time_stamps_ref = self.get_timestamps(slot=slot_ref,
+                                                plane=plane)
+          time_stamps_ref = time_stamps_ref[(time_stamps_ref >= t1) &
+                                  (time_stamps_ref <= t2)]
+          if (len(time_stamps_ref) == 0) and verbose:
+            print('WARNING: no time stamps found for reference ' +
+                  'slot %s, '%slot +
+                  'plane %s and (t1,t2)=(%s,%s)!'%(plane,t1,t2) +
+                  'No reference used!')
         else:
-          if verbose:
-            print('WARNING: no time stamps found for slot %s, '%slot +
-                  'plane %s and (t1,t2)=(%s,%s)'%(plane,t1,t2))
+          if slot_ref is None:
+            slot_ref = slot
+          print('ERROR: slot number %s not found!'%slot_ref) 
+          return
         pngcount = 0
         if verbose: 
           print( '... total number of profiles %s'%(len(time_stamps)))
         # generate png of profiles for each timestamps
         for time_stamp in time_stamps:
+          # find closest time stamp for reference bunch
+          if slot_ref is not None:
+            idx = np.argmin(np.abs(time_stamp-time_stamps_ref))
+            time_stamp_ref = time_stamps_ref[idx]
           pl.clf()
           flaux = self.plot_all(slot=slot,time_stamp=time_stamp,
-                                time_stamp_ref=time_stamp_ref,
-                                plane=plane,norm=norm)
+                      slot_ref=slot_ref,time_stamp_ref=time_stamp_ref,
+                      plane=plane,norm=norm,smooth=smooth)
           # if plot failed, flaux = False -> append t check_plot
           if flaux is False: check_plot[plane][slot].append(time_stamp)
           fnpl = os.path.join(tmpdir,'slot_%s_plane_%s_%05d.png'%(slot,
