@@ -1079,7 +1079,7 @@ class BSRTprofiles(object):
                      so that:
                         int(norm_data) = 1
     smooth: parameter to smooth (only!) average profiles with lowess.
-            smooth = 0: no smoothing
+            smooth = 0 or smooth = None: no smoothing
             smooth > 0: 'frac' parameter in lowess (Between 0 and 1.
             The fraction of the data used when estimating each y-value.)
     verbose : verbose option for additional output
@@ -1453,7 +1453,7 @@ class BSRTprofiles(object):
     return check_plot
   def plot_all(self,slot = None, time_stamp = None, slot_ref = None,
                time_stamp_ref = None, plane = 'h', norm = True, 
-               smooth = 0.025, verbose = False):
+               smooth = 0.025, log = True, verbose = False):
     """
     plot normalized or raw data profiles, cumulative distribution 
     function, residual and ratio in respect to reference distribution
@@ -1472,9 +1472,10 @@ class BSRTprofiles(object):
                      so that:
                         int(norm_data) = 1
     smooth: parameter to smooth profiles with lowess.
-            smooth = 0: no smoothing
+            smooth = 0 or smooth = None: no smoothing
             smooth > 0: 'frac' parameter in lowess (Between 0 and 1.
             The fraction of the data used when estimating each y-value.)
+    log: plot profile in log scale
     verbose : verbose option for additional output
     
     Returns:
@@ -1498,7 +1499,7 @@ class BSRTprofiles(object):
     flaux = self._plot_profile(slot=slot,time_stamp=time_stamp,
                               plane=plane,norm=norm,smooth=smooth,
                               verbose=verbose)
-    pl.gca().set_yscale('log')
+    if log: pl.gca().set_yscale('log')
     if norm:
       pl.gca().set_ylabel('probability [a.u.]')
     # 2) cumulative sum
