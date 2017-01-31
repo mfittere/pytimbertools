@@ -11,6 +11,12 @@ try:
 except ImportError:
   print('No module found: numpy, matplotlib, scipy modules and ' +
         'statsmodels should be present to run pytimbertools')
+
+try:
+  import pytimber
+except ImportError:
+  print('No module pytimber found!')
+
 import os
 import shutil
 import glob
@@ -129,6 +135,8 @@ class BSRTprofiles(object):
 
   def __init__(self, records=None, profiles=None, profiles_norm=None,
                profiles_norm_avg=None, profiles_stat=None):
+    # internal flag to check if background has been removed
+    self._rm_bg = False
     self.records   = records
     if self.records is None:
       self.filenames = None
@@ -538,7 +546,8 @@ class BSRTprofiles(object):
                                                            prof_int)
           except ValueError:
             pass
-
+    # flag to save status that background has been removed
+    self._rm_bg = True
     return self
   def _set_slots(self,plane,slots):
     """
@@ -552,22 +561,131 @@ class BSRTprofiles(object):
     elif not hasattr(slots,"__iter__"):
       slots = [slots]
     return np.sort(slots,axis=None)
-  def stats(self,slots=None,force=False,verbose=False):
+  def get_beta_lsf_variable_names(self,beam,db):
+    """
+    get variables names in logging database for lsf correction factor,
+    beta function at BSRT location and beam energy.
+
+    Parameters:                                                         
+    -----------                                                         
+    beam: LHC beam, either 'B1' or 'B2'                                 
+    db: database to extract data. Can be either directly from the 
+        logging database or from the pagestore database
+        (see self.get_beta_lsf_energy)      
+    """
+    [lsf_h_var, lsf_v_var]   = db.search('%LHC%BSRT%'+beam.upper()      
+                                         +'%LSF_%')                     
+    [beta_h_var, beta_v_var] = db.search('%LHC%BSRT%'+beam.upper()      
+                                         +'%BETA%')                     
+    energy_var = u'LHC.STATS:ENERGY'                                    
+    return lsf_h_var,lsf_v_var,beta_h_var,beta_v_var,energy_var
+  def get_beta_lsf_energy(self,beam,db=None):
+    """
+    get energy, lsf correction factor and beta function at BSRT for
+    profiles using pytimber
+
+    Parameters:
+    -----------
+    beam: LHC beam, either 'B1' or 'B2'
+    db: database to extract data. Can be either directly from the
+        logging database (default if not database is given):
+          db = pytimber.LoggingDB()
+        or a local one from pagestore:
+          db=pagestore.PageStore(dbfile,datadir,readonly=True)
+    
+    Returns:
+    --------
+    dictionary with energy, lsf correction and beta function in the
+    format:
+      {key: (t,v)
+    where t is an array with the timestamps and v is the array with the
+    values. All timestamps are in [ns] (note that logging database is
+    in [s]!)
+    """
+    if db is None:
+      try:
+        db = pytimber.LoggingDB()
+      except NameError:
+        print('ERROR: Trying to use db = pytimber.LoggingDB(), but ' +
+              'pytimber is not imported! You can use ' +
+              'pagestore database instead for offline analysis!')
+        return
+    # get min/max time of profile data
+    (t1,t2) = self._get_range_timestamps()
+    # convert [ns] -> [s]
+    (t1,t2) = (t1*1.e-9,t2*1.e-9)
+    bsrt_lsf_var = self.get_beta_lsf_variable_names(beam=beam,db=db)
+    lsf_h_var,lsf_v_var,beta_h_var,beta_v_var,energy_var = bsrt_lsf_var
+    t1_lsf = t1
+    bsrt_lsf = db.get(bsrt_lsf_var, t1_lsf, t2)
+    # only logged rarely, loop until array is not empty, print warning
+    # if time window exceeds one month
+    while (bsrt_lsf[lsf_h_var][0].size  == 0 or
+           bsrt_lsf[lsf_v_var][0].size  == 0 or
+           bsrt_lsf[beta_h_var][0].size == 0 or
+           bsrt_lsf[beta_v_var][0].size == 0 or
+           bsrt_lsf[energy_var][0].size == 0):
+      if (np.abs(t1_lsf-t1) > 30*24*60*60):
+        raise ValueError(('Last logging time for ' + ', %s'*5
+        + ' exceeds 1 month! Check your data!!!')%tuple(bsrt_lsf_var))
+        return
+      else:
+        t1_lsf = t1_lsf-24*60*60
+        bsrt_lsf = db.get(bsrt_lsf_var, t1_lsf, t2)
+        # convert [s] -> [ns] for all time stamps 
+        for k in bsrt_lsf.keys():
+          bsrt_lsf[k] = list(bsrt_lsf[k])
+          bsrt_lsf[k][0] = bsrt_lsf[k][0]*1.e9
+    return bsrt_lsf
+      
+  def get_stats(self,beam=None,db=None,slots=None,force=False,verbose=False):
     """
     calculate statistical parameters for the average over all profiles
     for each timestamp.
 
     Parameters:
     -----------
-    slot: slot numbers (single value or list)
+    beam: beam, either 'B1' or 'B2' or None for no conversion.
+          The specification of the beam is needed to convert picture 
+          sigma to beam normalized emittance using 
+            self.get_beta_lsf_energy to
+          extract variables from logging data base. If beam=None
+    db: database to extract data. Can be either directly from the
+        logging database (also in case of default db=None if no 
+        database is given):
+          db = pytimber.LoggingDB()
+        or a local one from pagestore:
+          db=pagestore.PageStore(dbfile,datadir,readonly=True)
+    slots: slot numbers (single value or list)
     force: force recalculation
     verbose : verbose option for additional output
 
     Returns:
     --------
     self : BSRTprofiles class object with recalculated 
-        self.profiles_stat
+           self.profiles_stat
+
+    describe all statistical parameters
+    cor_fac: correction factor to convert profile sigma to beam
+         emittance.
+         cor_fac = None: do not convert
+         cor_fac = (energy,betah,betav,lsfh,lsfv):
+             *energy* = beam energy
+             *beta*   = beta function at BSRT
+             *lsf*    = correction factor for system optical resolution
+             BSRT profile sigma are then converted to beam normalized
+             emittance with:
+                sigma_beam = sqrt((sigma_bsrt)**2-(lsf)**2)
+                eps_beam = sigma_beam**2/beta/(beta_rel*gamma_rel)
     """
+    # check of input parameters
+    if beam is None:
+      if verbose:
+        print("WARNING: no conversion of sigma to beam emittance!" +
+              "Specify the parameter 'beam' and the database 'db'" + 
+              "to be used for data extraction.")
+    elif beam.upper() != 'B1' and beam.upper() != 'B2':
+      raise ValueError('beam must be either None, b1 or b2!')
     # constants for cumulative distribution later
     # - mean = 50 % of cumulative distribution
     # - in n sigma of the distribution erf(n/sqrt(2)) per cent are 
@@ -589,6 +707,17 @@ class BSRTprofiles(object):
       elif force is True:
         print('... delete old data and recalculate statistical ' + 
             'parameters')
+        # get lsf factor, beta@BSRT and energy from logging databse
+    # get lsf correction factor, beta function and beam energy
+    if (beam is not None) and (beam.upper() in ['B1','B2']):
+      # variable names
+      bsrt_lsf_var = self.get_beta_lsf_variable_names(beam=beam,
+                                                        db=db)
+      lsf_var={};beta_var={}
+      (lsf_var['h'],lsf_var['v'],beta_var['h'],beta_var['v'],
+           energy_var) = bsrt_lsf_var
+      # data from database
+      bsrt_lsf_db = self.get_beta_lsf_energy(beam=beam,db=db)
     for plane in ['h','v']:
       if verbose:
         print('... start plane %s'%plane.upper())
@@ -599,6 +728,7 @@ class BSRTprofiles(object):
         if (slot in self.profiles_stat[plane].keys()) and (force is False):
           continue
         # 2) calculate/recalculate statistical parameters
+        # initialize/delete old data
         self.profiles_stat[plane][slot] = []
         for time_stamp in self.get_timestamps(slot=slot, plane=plane):
           # average profile
@@ -606,18 +736,26 @@ class BSRTprofiles(object):
                              time_stamp=time_stamp, plane=plane)            
           # 1) estimate centroid with three different methods:
           # 1a) Gaussian fit (cent_gauss)
-          # 1b) Gaussian fit (cent_gauss)
+          # 1b) qGaussian fit (cent_qgauss)
           # 1c) center of gravity sum(x*w) (cent_stat)
           # 1d) median (cent_median)
           # 1e) 50 % of cummulative sum (cent_cumsum)
           # 1f) peak of distribution
+
           # 2) estimate of distribution width with three different 
           #    methods:
           # 2a) Gaussian fit (sigma_gauss)
-          # 2b) Gaussian fit (sigma_gauss)
+          # 2b) qGaussian fit (sigma_qgauss)
           # 2c) statistical rms sum(x*w) (sigma_stat)
           # 2d) median absolute deviation = median(|x-median(x)|)
           # 2e) 26 % and 84% of cummulative sum (sigma_cumsum)
+
+          # 3) calculate beam normalized emittance for sigma values
+          # g) emittance for all statistical parameters in 2)
+
+          # 4) Estimate of halo
+          # 4y) sum over bins between 3 mm and 6 mm
+          # 4z) entropie sum(p_k ln(p_k) ) where p_k is the bin height
 
           # a) Gaussian fit
           # assume initial values of
@@ -734,6 +872,62 @@ class BSRTprofiles(object):
           bg_avg_left = y[:bgnavg].mean()
           bg_avg_right = y[-bgnavg:].mean()
           bg_avg = (bg_avg_left+bg_avg_right)/2
+          # g) emittance
+          # if no beam is given
+          (emit_gauss,emit_qgauss,emit_stat,emit_median,
+          emit_cumsum_32,emit_cumsum_68) = (0,)*6
+          # if beam given convert picture sigma to beam sigma and then 
+          # to normalized emittance
+          if (beam is not None) and (beam.upper() in ['B1','B2']):
+            # get lsf,beta and energy with time stamp closest to
+            # time_stamp and smaller than time_stamp
+            bsrt_lsf = {}
+            for k in lsf_var[plane],beta_var[plane],energy_var:
+              idx = np.where(time_stamp-bsrt_lsf_db[k][0]>=0.)[0][-1] 
+              bsrt_lsf[k] = bsrt_lsf_db[k][1][idx]
+            # convert sigma to emittance
+            emit_norm = []
+            for sigma in [sigma_gauss,sigma_qgauss,sigma_stat,
+              sigma_median,sigma_cumsum_32,sigma_cumsum_68]:
+              # geometric emittance
+              emit_geom = ((sigma**2 - bsrt_lsf[lsf_var[plane]]**2)/
+                           bsrt_lsf[beta_var[plane]]) 
+              emit_norm.append(pytimber.toolbox.emitnorm(emit_geom,
+                              bsrt_lsf[energy_var],m0=938.272046))
+            [emit_gauss,emit_qgauss,emit_stat,emit_median,
+                          emit_cumsum_32,emit_cumsum_68] = emit_norm
+          # estimate of halo
+          # y) sum bins between x_min mm and x_max mm
+          #    sum bins between -x_min mm and -x_max mm (remember bump  
+          #      on right side of profile, so better do individual sums)
+          x_min,x_max = 3,6
+          mask_r = np.logical_and(profs_norm_avg['pos'] < x_max,
+                            profs_norm_avg['pos'] > x_min)
+          mask_l = np.logical_and(profs_norm_avg['pos'] < -x_min,
+                            profs_norm_avg['pos'] > -x_max)
+          sum_bin_left = profs_norm_avg['amp'][mask_l].sum() 
+          sum_bin_right = profs_norm_avg['amp'][mask_r].sum() 
+          # z) calculate the entropy and divide by the total entropy
+          #      entropie = -sum_(k=0)^(nbins) p_k ln(p_k)
+          #    where p_k is the bin height
+          #    Now normalize in addition to the maximum entropie = 
+          #    entropie for which all bins have the same height
+          #      entropie_max = -sum_(k=0)^(nbins) 1/nbins * ln(1/nbins)
+          #                   = -nbins*1/nbins*ln(1/nbins)
+          #                   = ln(nbins)
+          #    => entropie_norm = -(1/ln(nbins))*
+          #                               sum_(k=0)^(nbins) p_k ln(p_k)
+          #    For the case with removed background the bin amplitudes
+          #    can be negative, so this only works if the background is
+          #    not removed.
+          #    Even without background removal bins can be negative
+          #    -> take as quick fix the absolute value
+          if self._rm_bg is False:
+            nbins = len(profs_norm_avg['pos'])
+            entropie = -(1/np.log(nbins))*(profs_norm_avg['amp']*
+                           np.log(np.abs(profs_norm_avg['amp']))).sum()
+          else:
+            entropie = 0
           self.profiles_stat[plane][slot].append((time_stamp,
             # Gaussian fit
             c_gauss, a_gauss, cent_gauss, sigma_gauss,
@@ -747,8 +941,14 @@ class BSRTprofiles(object):
             cent_stat, sigma_stat, cent_median, mad, sigma_median,
             cent_cumsum, sigma_cumsum_32, sigma_cumsum_68,
             cent_peak,
+            # normalized emittance
+            emit_gauss,emit_qgauss,emit_stat,emit_median,
+            emit_cumsum_32,emit_cumsum_68,
             # background estimate
-            bg_avg_left,bg_avg_right,bg_avg))
+            bg_avg_left,bg_avg_right,bg_avg,
+            # estimate of halo
+            sum_bin_left,sum_bin_right,entropie
+            ))
     # convert to a structured array
     ftype=[('time_stamp',int),('c_gauss',float),('a_gauss',float),
            ('cent_gauss',float),('sigma_gauss',float),
@@ -763,8 +963,15 @@ class BSRTprofiles(object):
            ('sigma_stat',float),('cent_median',float),('mad',float),
            ('sigma_median',float),('cent_cumsum',float),
            ('sigma_cumsum_32',float),('sigma_cumsum_68',float),
-           ('cent_peak',float),('bg_avg_left',float),
-           ('bg_avg_right',float),('bg_avg',float)]
+           ('cent_peak',float),
+           ('emit_gauss',float),('emit_qgauss',float),
+           ('emit_stat',float),('emit_median',float),
+           ('emit_cumsum_32',float),('emit_cumsum_68',float),
+           ('bg_avg_left',float),('bg_avg_right',float),
+           ('bg_avg',float),
+           ('sum_bin_left',float),('sum_bin_right',float),
+           ('entropie',float)
+           ]
     for plane in ['h','v']:
       for k in self.profiles_stat[plane].keys():
         self.profiles_stat[plane][k] = np.array(
@@ -789,6 +996,19 @@ class BSRTprofiles(object):
     plane *plane*
     """
     return np.sort(list(set(self.profiles[plane][slot]['time_stamp'])))
+  def _get_range_timestamps(self):
+    """
+    Returns:
+    --------
+    (t1,t2) = minimum/maximum timestamps of all profiles in unix
+              time [ns]
+    """
+    lmin,lmax = [[],[]]
+    for pl in self.profiles.keys():
+      for sl in self.profiles[pl].keys():
+        lmin.append((self.profiles[pl][sl]['time_stamp']).min())
+        lmax.append((self.profiles[pl][sl]['time_stamp']).max())
+    return (np.min(lmin),np.max(lmax))
   def get_profile(self, slot = None, time_stamp = None, plane = 'h'):
     """
     get profile data for slot *slot*, time stamp *time_stamp* as
@@ -820,8 +1040,13 @@ class BSRTprofiles(object):
     returns averaged normalized profile for slot *slot*, time stamp
     *time_stamp* as unix time [ns] and plane *plane*.
     """
-    mask = (self.profiles_norm_avg[plane][slot]['time_stamp'] 
+    try:
+      mask = (self.profiles_norm_avg[plane][slot]['time_stamp'] 
                 == time_stamp)
+    except TypeError:
+      print('Data could not be extracted! Have you run ' +
+            'self.norm() to normalize profiles?')
+      return
     if len(np.where(mask==True)[0]) == 1:
       return self.profiles_norm_avg[plane][slot][mask][0]
     else:
