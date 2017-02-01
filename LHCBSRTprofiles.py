@@ -137,6 +137,9 @@ class BSRTprofiles(object):
                profiles_norm_avg=None, profiles_stat=None):
     # internal flag to check if background has been removed
     self._rm_bg = False
+    # bgnavg = average over 10 bins on left and 10 bins on right to
+    # obtain estimate of background level
+    self.bgnavg = 10
     self.records   = records
     if self.records is None:
       self.filenames = None
@@ -491,7 +494,7 @@ class BSRTprofiles(object):
     Removes the background from all normalized profiles.
     Estimate background by:
       1) averaging the amplitude over the first and last 10 bins for
-         each bin
+         each slot
       2) averaging over all profiles for each slot as background seems
          to stay rather constant
 
@@ -511,13 +514,12 @@ class BSRTprofiles(object):
     for plane in 'h','v':
       for slot in self.profiles_norm[plane].keys():
         # estimate background
-        bgnavg = 10
         ts = self.get_timestamps(slot=slot,plane=plane)
         bg_avg_left = np.mean([ self.get_profile_norm_avg(slot=slot,
-                          time_stamp=t,plane=plane)['amp'][:bgnavg] 
+                          time_stamp=t,plane=plane)['amp'][:self.bgnavg] 
                           for t in ts ],axis=None)
         bg_avg_right = np.mean([ self.get_profile_norm_avg(slot=slot,
-                          time_stamp=t,plane=plane)['amp'][-bgnavg:] 
+                          time_stamp=t,plane=plane)['amp'][-self.bgnavg:] 
                           for t in ts ])
         bg_avg = (bg_avg_left+bg_avg_right)/2
         # remove it from the normalized profiles
@@ -868,9 +870,8 @@ class BSRTprofiles(object):
           cent_peak = x[y.argmax()]
           # background estimate
           # average the last 10 bins
-          bgnavg = 10
-          bg_avg_left = y[:bgnavg].mean()
-          bg_avg_right = y[-bgnavg:].mean()
+          bg_avg_left = y[:self.bgnavg].mean()
+          bg_avg_right = y[-self.bgnavg:].mean()
           bg_avg = (bg_avg_left+bg_avg_right)/2
           # g) emittance
           # if no beam is given
