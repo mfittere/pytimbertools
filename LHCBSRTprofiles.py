@@ -768,11 +768,26 @@ class BSRTprofiles(object):
           # a compensate for c0 so that the integral over the
           # the distribution is equal to 1. If c is small, a should be
           # close to 1
+          # -- limits for c,a:
+          #    background is usually around 0.008 
+          #        -> limit c to [-0.1,0.1]
+          #        -> limit a to [0,2]
+          #    allow for negative values if background is subtracted
+          #    as background values could then also become negative
+          #    as the average over the whole fill for each bunch is
+          #    subtracted
+          # -- limits for cent,sigma:
+          #    centroid shouldn't exceed maximum range of profile, which
+          #    is approximately [-8,8]
           try:
+            if self._rm_bg is False:
+              cmin,cmax = [0,0.1]
+            else:
+              cmin,cmax = [-0.1,0.1]
             p,pcov = curve_fit(tb.gauss_pdf,profs_norm_avg['pos'],
                                profs_norm_avg['amp'],p0=[0,1,0,2],
-                               bounds=([0,0,-np.inf,0],
-                                       [1,np.inf,np.inf,np.inf]))
+                               bounds=([cmin,0,-8,0],
+                                       [cmax,2,8,16]))
             # error on p
             psig = [ np.sqrt(pcov[i,i]) for i in range(len(p)) ]
             c_gauss, a_gauss = p[0], p[1]
@@ -792,18 +807,36 @@ class BSRTprofiles(object):
           #    parameters
           # fit function =
           #   c+a*sqrt(beta)/cq*eq(-beta*(x-mu)**2)
-          # cq is also an estimate for the background
-          # a compensate for c0 so that the integral over the
-          # the distribution is equal to 1. If c0 is small, a should be
-          # close to 1
+          # -- cq is also an estimate for the background
+          #    a compensate for c0 so that the integral over the
+          #    the distribution is equal to 1. If c0 is small, a should be
+          #    close to 1
+          # -- limits for c,a:
+          #    background is usually around 0.008 
+          #        -> limit c to [-0.1,0.1]
+          #        -> limit a to [0,2]
+          #    allow for negative values if background is subtracted
+          #    as background values could then also become negative
+          #    as the average over the whole fill for each bunch is
+          #    subtracted
+          # -- limits for cent:
+          #    centroid shouldn't exceed maximum range of profile, which
+          #    is approximately [-8,8]
           try:
-            p,pcov = curve_fit(tb.qgauss_pdf,profs_norm_avg['pos'],
+            if self._rm_bg is False:
+              cmin,cmax = [0,0.1]
+            else:
+              cmin,cmax = [-0.1,0.1]
+            p,pcovqg = curve_fit(tb.qgauss_pdf,profs_norm_avg['pos'],
                                profs_norm_avg['amp'],
-                               bounds=([0,0,1,-np.inf,0],
-                                 [1,np.inf,3,np.inf,np.inf]))
+                               bounds=([cmin,0,1,-8,0],
+                                 [cmax,2,3,8,np.inf]))
+            profs_norm_qgauss = tb.qgauss_pdf(profs_norm_avg['pos'],*p)
+            xisq_qgauss = ((profs_norm_avg['amp']-profs_norm_qgauss)**2/
+                           (profs_norm_qgauss)).sum()
             # error on p
-            psig = [ np.sqrt(pcov[i,i]) for i in range(len(p)) ]
-            pcov_beta_q = pcov[2,4]
+            psig = [ np.sqrt(pcovqg[i,i]) for i in range(len(p)) ]
+            pcovqg_beta_q = pcovqg[2,4]
             c_qgauss, a_qgauss = p[0], p[1]
             q_qgauss = p[2]
             cent_qgauss, beta_qgauss = p[3], p[4]
@@ -818,12 +851,12 @@ class BSRTprofiles(object):
               # sigma_f**2 = 
               #   |df/da|**2*sigma_a**2+|df/db|**2*sigma_b**2
               #   + 2*(df/da)*(df/db)*sigma_ab
-              # pcov_beta_q = covariance entry beta_q 
+              # pcovqg_beta_q = covariance entry beta_q 
               var_qgauss_err = ( (1/(4*beta_qgauss**3*(5-3*q_qgauss))
                    *beta_qgauss_err**2) +
                 (9/(4*beta_qgauss*(5-3*q_qgauss)**3)
                    *q_qgauss_err**2) +
-                (3/(4*beta_qgauss**2*(5-3*q_qgauss)**2))*pcov_beta_q )
+                (3/(4*beta_qgauss**2*(5-3*q_qgauss)**2))*pcovqg_beta_q )
               sigma_qgauss_err = np.sqrt(var_qgauss_err)
             elif (q_qgauss >= 5/3.) & (q_qgauss < 2):
               sigma_qgauss = np.inf
@@ -935,7 +968,7 @@ class BSRTprofiles(object):
             c_gauss_err, a_gauss_err, cent_gauss_err, sigma_gauss_err,
             # q-Gaussian fit
             c_qgauss, a_qgauss, q_qgauss, cent_qgauss, beta_qgauss,
-            sigma_qgauss,
+            sigma_qgauss, pcovqg, xisq_qgauss,
             c_qgauss_err, a_qgauss_err, q_qgauss_err, cent_qgauss_err,
             beta_qgauss_err, sigma_qgauss_err,
             # statistical parameters
@@ -957,7 +990,9 @@ class BSRTprofiles(object):
            ('cent_gauss_err',float),('sigma_gauss_err',float),
            ('c_qgauss',float),('a_qgauss',float),('q_qgauss',float),
            ('cent_qgauss',float),('beta_qgauss',float),
-           ('sigma_qgauss',float),('c_qgauss_err',float),
+           ('sigma_qgauss',float),
+           ('pcov_qgauss',float,(5,5)),('xisq_qgauss',float),
+           ('c_qgauss_err',float),
            ('a_qgauss_err',float),('q_qgauss_err',float),
            ('cent_qgauss_err',float),('beta_qgauss_err',float),
            ('sigma_qgauss_err',float),('cent_stat',float),
