@@ -1,6 +1,5 @@
 #! /usr/bin/env python
 
-
 try:
   import numpy as np
   import matplotlib
@@ -640,7 +639,8 @@ class BSRTprofiles(object):
           bsrt_lsf[k][0] = bsrt_lsf[k][0]*1.e9
     return bsrt_lsf
       
-  def get_stats(self,beam=None,db=None,slots=None,force=False,verbose=False):
+  def get_stats(self,beam=None,db=None,slots=None,force=False,
+                verbose=False):
     """
     calculate statistical parameters for the average over all profiles
     for each timestamp.
@@ -703,13 +703,7 @@ class BSRTprofiles(object):
       self.profiles_stat={}
       self.profiles_stat['h']={}
       self.profiles_stat['v']={}
-    if verbose:
-      if force is False:
-        print('... calculate statistical parameters.')
-      elif force is True:
-        print('... delete old data and recalculate statistical ' + 
-            'parameters')
-        # get lsf factor, beta@BSRT and energy from logging databse
+    # get lsf factor, beta@BSRT and energy from logging databse
     # get lsf correction factor, beta function and beam energy
     if (beam is not None) and (beam.upper() in ['B1','B2']):
       # variable names
@@ -720,6 +714,12 @@ class BSRTprofiles(object):
            energy_var) = bsrt_lsf_var
       # data from database
       bsrt_lsf_db = self.get_beta_lsf_energy(beam=beam,db=db)
+    if verbose:
+      if force is False:
+        print('... calculate statistical parameters.')
+      elif force is True:
+        print('... delete old data and recalculate statistical ' + 
+            'parameters')
     for plane in ['h','v']:
       if verbose:
         print('... start plane %s'%plane.upper())
@@ -758,6 +758,10 @@ class BSRTprofiles(object):
           # 4) Estimate of halo
           # 4y) sum over bins between 3 mm and 6 mm
           # 4z) entropie sum(p_k ln(p_k) ) where p_k is the bin height
+          
+          # 5) goodness of fit parameters:
+          # 5h) calculate xi^2
+          # 5i) calculate correlation matrix
 
           # a) Gaussian fit
           # assume initial values of
@@ -784,12 +788,22 @@ class BSRTprofiles(object):
               cmin,cmax = [0,0.1]
             else:
               cmin,cmax = [-0.1,0.1]
-            p,pcov = curve_fit(tb.gauss_pdf,profs_norm_avg['pos'],
+            p,pcov_g = curve_fit(tb.gauss_pdf,profs_norm_avg['pos'],
                                profs_norm_avg['amp'],p0=[0,1,0,2],
                                bounds=([cmin,0,-8,0],
                                        [cmax,2,8,16]))
+            profs_norm_gauss = tb.gauss_pdf(profs_norm_avg['pos'],*p)
+            # h) calculate xi-squared
+            xisq_g = ((profs_norm_avg['amp']-profs_norm_gauss)**2/
+                     (profs_norm_gauss)).sum()
+            # i) calculate the correlation matrix
+            # corr(x,y) = sig_xy/(sigx*sigy)
+            #           = sqrt(pcov(x,y)/(pcov(x,x)*pcov(y,y)))
+            pcorr_g = np.array([ [ 
+                       pcov_g[i,j]/np.sqrt(pcov_g[i,i]*pcov_g[j,j]) 
+                       for j in range(len(p))] for i in range(len(p))])
             # error on p
-            psig = [ np.sqrt(pcov[i,i]) for i in range(len(p)) ]
+            psig = [ np.sqrt(pcov_g[i,i]) for i in range(len(p)) ]
             c_gauss, a_gauss = p[0], p[1]
             cent_gauss, sigma_gauss = p[2],p[3]
             c_gauss_err, a_gauss_err = psig[0], psig[1]
@@ -827,16 +841,23 @@ class BSRTprofiles(object):
               cmin,cmax = [0,0.1]
             else:
               cmin,cmax = [-0.1,0.1]
-            p,pcovqg = curve_fit(tb.qgauss_pdf,profs_norm_avg['pos'],
+            p,pcov_qg = curve_fit(tb.qgauss_pdf,profs_norm_avg['pos'],
                                profs_norm_avg['amp'],
                                bounds=([cmin,0,1,-8,0],
                                  [cmax,2,3,8,np.inf]))
             profs_norm_qgauss = tb.qgauss_pdf(profs_norm_avg['pos'],*p)
-            xisq_qgauss = ((profs_norm_avg['amp']-profs_norm_qgauss)**2/
-                           (profs_norm_qgauss)).sum()
+            # h) calculate xi-squared
+            xisq_qg = ((profs_norm_avg['amp']-profs_norm_qgauss)**2/
+                      (profs_norm_qgauss)).sum()
+            # i) calculate the correlation matrix
+            # corr(x,y) = sig_xy/(sigx*sigy)
+            #           = sqrt(pcov(x,y)/(pcov(x,x)*pcov(y,y)))
+            pcorr_qg = np.array([ [ 
+                       pcov_qg[i,j]/np.sqrt(pcov_qg[i,i]*pcov_qg[j,j]) 
+                       for j in range(len(p))] for i in range(len(p))])
             # error on p
-            psig = [ np.sqrt(pcovqg[i,i]) for i in range(len(p)) ]
-            pcovqg_beta_q = pcovqg[2,4]
+            psig = [ np.sqrt(pcov_qg[i,i]) for i in range(len(p)) ]
+            pcov_beta_q = pcov_qg[2,4]
             c_qgauss, a_qgauss = p[0], p[1]
             q_qgauss = p[2]
             cent_qgauss, beta_qgauss = p[3], p[4]
@@ -851,12 +872,12 @@ class BSRTprofiles(object):
               # sigma_f**2 = 
               #   |df/da|**2*sigma_a**2+|df/db|**2*sigma_b**2
               #   + 2*(df/da)*(df/db)*sigma_ab
-              # pcovqg_beta_q = covariance entry beta_q 
+              # pcov_beta_q = covariance entry beta_q 
               var_qgauss_err = ( (1/(4*beta_qgauss**3*(5-3*q_qgauss))
                    *beta_qgauss_err**2) +
                 (9/(4*beta_qgauss*(5-3*q_qgauss)**3)
                    *q_qgauss_err**2) +
-                (3/(4*beta_qgauss**2*(5-3*q_qgauss)**2))*pcovqg_beta_q )
+                (3/(4*beta_qgauss**2*(5-3*q_qgauss)**2))*pcov_beta_q )
               sigma_qgauss_err = np.sqrt(var_qgauss_err)
             elif (q_qgauss >= 5/3.) & (q_qgauss < 2):
               sigma_qgauss = np.inf
@@ -965,10 +986,12 @@ class BSRTprofiles(object):
           self.profiles_stat[plane][slot].append((time_stamp,
             # Gaussian fit
             c_gauss, a_gauss, cent_gauss, sigma_gauss,
+            pcov_g, pcorr_g, xisq_g,
             c_gauss_err, a_gauss_err, cent_gauss_err, sigma_gauss_err,
             # q-Gaussian fit
             c_qgauss, a_qgauss, q_qgauss, cent_qgauss, beta_qgauss,
-            sigma_qgauss, pcovqg, xisq_qgauss,
+            sigma_qgauss,
+            pcov_qg, pcorr_qg, xisq_qg,
             c_qgauss_err, a_qgauss_err, q_qgauss_err, cent_qgauss_err,
             beta_qgauss_err, sigma_qgauss_err,
             # statistical parameters
@@ -986,13 +1009,15 @@ class BSRTprofiles(object):
     # convert to a structured array
     ftype=[('time_stamp',int),('c_gauss',float),('a_gauss',float),
            ('cent_gauss',float),('sigma_gauss',float),
-           ('c_gauss_err',float),('a_gauss_err',float),
+           ('pcov_gauss',float,(4,4)),('pcorr_gauss',float,(4,4)),
+           ('xisq_gauss',float),('c_gauss_err',float),
+           ('a_gauss_err',float),
            ('cent_gauss_err',float),('sigma_gauss_err',float),
            ('c_qgauss',float),('a_qgauss',float),('q_qgauss',float),
            ('cent_qgauss',float),('beta_qgauss',float),
            ('sigma_qgauss',float),
-           ('pcov_qgauss',float,(5,5)),('xisq_qgauss',float),
-           ('c_qgauss_err',float),
+           ('pcov_qgauss',float,(5,5)),('pcorr_qgauss',float,(5,5)),
+           ('xisq_qgauss',float),('c_qgauss_err',float),
            ('a_qgauss_err',float),('q_qgauss_err',float),
            ('cent_qgauss_err',float),('beta_qgauss_err',float),
            ('sigma_qgauss_err',float),('cent_stat',float),
