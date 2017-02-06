@@ -133,12 +133,9 @@ class BSRTprofiles(object):
     return np.array(r.read_double(sz)[:sz])
 
   def __init__(self, records=None, profiles=None, profiles_norm=None,
-               profiles_norm_avg=None, profiles_stat=None):
-    # internal flag to check if background has been removed
-    self._rm_bg = False
-    # bgnavg = average over 10 bins on left and 10 bins on right to
-    # obtain estimate of background level
-    self.bgnavg = 10
+               profiles_norm_avg=None, profiles_norm_mvavg=None, 
+               profiles_stat=None,
+               bgnavg = None, nmvavg = None):
     self.records   = records
     if self.records is None:
       self.filenames = None
@@ -147,6 +144,7 @@ class BSRTprofiles(object):
     self.profiles = profiles
     self.profiles_norm = profiles_norm
     self.profiles_norm_avg = profiles_norm_avg
+    self.profiles_norm_mvavg = profiles_norm_avg
     self.profiles_stat = profiles_stat
     if self.profiles_stat is None:
       self.profiles_stat_var = None
@@ -155,6 +153,15 @@ class BSRTprofiles(object):
       plane_aux = self.profiles_stat.keys()[0]
       slot_aux = self.profiles_stat[plane_aux].keys()[0] 
       self.profiles_stat_var = self.profiles_stat[plane_aux][slot_aux].dtype.names
+    # -- background estimate
+    # internal flag to check if background has been removed
+    self._rm_bg = False
+    # bgnavg = average over bgnavg bins on left and bgnavg bins on right to
+    # obtain estimate of background level
+    self.bgnavg = bgnavg
+    # -- estimate noise (uncertainty) with the std over *nmvavg* 
+    # measurements, needed to calculate xi**2
+    self.nmvavg = nmvavg
   @classmethod
   def load_files(cls,files=None,verbose=True):
     """
@@ -388,6 +395,35 @@ class BSRTprofiles(object):
         self.profiles_norm[plane][k] = np.array(
             self.profiles_norm[plane][k], dtype=ftype)
     return self
+  def _norm_mvavg_profiles(self,verbose = True):
+    """
+    Generate moving average over self.nmvavg+1 timestamps of normalized 
+    profiles for each plane, slot and timestamp. The moving average is 
+    taken over all profiles for each plane, slot and time stamp.
+
+    Parameters:
+    -----------
+    verbose : verbose option for additional output
+
+    Returns:
+    --------
+    self : BSRTprofiles class object with recalculated 
+        self.profiles_norm_mvavg (moving average normalized profile)
+
+    Note:
+    -----
+    profile data is assumed to be equally spaced in x
+    """
+    if verbose:
+      if self.profiles_norm_mvavg is not None:
+        print('... delete self.profiles_norm_mvavg')
+    if verbose:
+      print('... moving average over self.nmvavg = %s '%(self.nmvavg) +
+            'normalized profiles. Averaged normalized profiles are' +
+            ' saved in self.profiles_norm_mvavg')
+    self.profiles_norm_mvavg = self._get_norm_avg_mvavg_profiles(
+                                 nmvavg = self.nmvavg,verbose=verbose)
+    return self
   def _norm_avg_profiles(self,verbose = True):
     """
     Generate average of normalized profiles for each
@@ -408,24 +444,76 @@ class BSRTprofiles(object):
     -----
     profile data is assumed to be equally spaced in x
     """
-    # generate normalized profiles if missing
-    if self.profiles_norm is None:
-      self = self._norm_profiles(verbose=verbose)
     if verbose:
       if self.profiles_norm_avg is not None:
         print('... delete self.profiles_norm_avg')
-    self.profiles_norm_avg={}
     if verbose:
       print('... average normalized profiles. Averaged normalized ' +
             'profiles are saved in self.profiles_norm_avg')
+    self.profiles_norm_avg = self._get_norm_avg_mvavg_profiles(
+                                 nmvavg = None,verbose=verbose)
+    return self
+  def _get_norm_avg_mvavg_profiles(self, nmvavg = None, verbose = True):
+    """
+    function to calculate average over all profiles with the same 
+    timestamp (nmvavg = None) or moving average over nmvavg time stamps
+    (nmvavg = even integer) using all profiles for each time stamp
+    
+    Parameters:
+    -----------
+    nmvavg: a) nmvavg = None:
+               calculate the average over all profiles with the same
+               time stamp
+            b) nmvavg = even integer:
+               calculate the moving average over all profiles and
+               nmvavg+1 time stamps (take previous/following nmvavg/2
+               time stamps + profile itself. This means, that if e.g.
+               3 profiles are taken per time stamp and nmvavg = 10, the
+               average and std is taken over in total 
+               3*(nmavg+1) = 33 profiles.
+    Returns:
+    --------
+    profs_norm_avg: structured array of average profiles either calculated
+               with a) or b). Profiles are here always probability
+               distributions, meaning that they are normalized to 1
+               pos = position in mm (bin)
+               amp = mean amplitude of bin over a) or b) profiles
+               ampstd = standard deviation of amp (estimate of noise)
+               amperr = error of mean value (= ampstd/sqrt(nmvavg) )
+    """
+    # check values
+    if nmvavg is not None:
+      if nmvavg % 2 != 0:
+         raise ValueError('nmvavg must be None or an even integer!')
+    # generate normalized profiles if missing
+    if self.profiles_norm is None:
+      self = self._norm_profiles(verbose=verbose)
+    # abbreviate profs_norm_avg with pna
+    pna = {}
     for plane in 'h','v':
-      self.profiles_norm_avg[plane]={}
+      pna[plane]={}
       for slot in self.profiles_norm[plane].keys():
-        self.profiles_norm_avg[plane][slot]=[]
+        pna[plane][slot]=[]
         ts = self.get_timestamps(slot=slot,plane=plane)
-        for time_stamp in ts:
+        # check that there are enough time stamps for nmavg
+        if (nmvavg is not None) and (nmvavg + 1 > len(ts)):
+          raise ValueError('not enought profiles for nmvavg = %s'%nmvavg)
+        for time_stamp,ts_idx in zip(ts,xrange(len(ts))):
+          # a) nmvavg = None: average over all profiles with the same
+          #    time stamp -> time_stamp already correctly set
+          if nmvavg is None: 
+            ts_profs = time_stamp
+          # b) nmvavg = even integer:
+          else:
+            nmvavg_2 = int(round(nmvavg/2))
+            if ts_idx <= nmvavg_2:
+              ts_profs = [ts[0],ts[nmvavg]]
+            elif ts_idx >= len(ts)-nmvavg_2: 
+              ts_profs = [ts[-nmvavg-1],ts[-1]]
+            else:
+              ts_profs = [ts[ts_idx-nmvavg_2],ts[ts_idx+nmvavg_2]]
           profs = self.get_profile_norm(plane=plane,slot=slot,
-                                         time_stamp=time_stamp)
+                                         time_stamp=ts_profs)
           # no profiles found -> skip
           if len(profs) == 0:
             if verbose:
@@ -433,32 +521,63 @@ class BSRTprofiles(object):
             continue
           # one profile
           elif len(profs) == 1:
-            profs_avg = profs[0].copy()
+            pos = profs[0]['pos']
+            amp = profs[0]['amp']
+            ampstd = np.zeros(len(pos))
+            amperr = np.zeros(len(pos))
           # more than one profile
           elif len(profs) > 1:
             # take the average over the profiles
-            # 1) check that x-axis are the same
+            # 1) get the profile with the minimum length
+            l_profs = np.array([ len(profs[i]['pos']) 
+                          for i in xrange(len(profs)) ])
+            idx_lmin_prof = np.argmin(l_profs)
+            lmin_prof = np.min(l_profs)
+            # 2) shorten all profiles to the minimum length if they do
+            #    not already have the same length
+            if np.any(l_profs != lmin_prof):
+              if verbose:
+                print('WARNING: profiles for slot %s '%slot +
+                      'and time stamp %s '%time_stamp +
+                      'have different length! Shortening all profiles '
+                      'to minimum length %s'%lmin_prof)
+              xmin = (profs[idx_lmin_prof]['pos']).min()
+              xmax = (profs[idx_lmin_prof]['pos']).max()
+              for i in xrange(len(profs)):
+                mask = np.logical_and(profs[i]['pos'] >= xmin,
+                                      profs[i]['pos'] <= xmax)
+                profs[i]['pos'] = profs[i]['pos'][mask]
+                profs[i]['amp'] = profs[i]['amp'][mask]
+            # 3) check that x-axis of all profiles are the same
+            #    check_x = 0 if x-axis of profiles are the same
+            #    check_x > 0 if x-axis differ
             check_x = 0
             for i in xrange(len(profs)):
-              if (np.abs(profs[0]['pos']-profs[1]['pos'])).sum() != 0:
+              if (np.abs(profs[0]['pos']-profs[i]['pos'])).sum() != 0:
                 check_x +=1
-            #     check_x = 0 if x-axis of profiles are the same
-            #     check_x > 0 if x-axis differ
-            if check_x ==0:
+            if check_x == 0:
               # 2) take the average. Integral is normalized to 1
               #    -> to normalize avg divide by number of profiles
-              profs_avg = profs[0].copy()
-              profs_avg['amp'] = profs['amp'].sum(axis=0)/len(profs)
-          self.profiles_norm_avg[plane][slot].append((int(time_stamp),
-              profs_avg['pos'],profs_avg['amp']))
+              pos = profs[0]['pos']
+              # mean amplitude of bin
+              amp = profs['amp'].mean(axis=0)
+              # standard deviation of amp (estimate of noise)
+              ampstd = profs['amp'].std(axis=0)
+              # error of mean value (= ampstd/sqrt(nmvavg) )
+              amperr = ampstd/np.sqrt(len(profs))
+              pna[plane][slot].append((int(time_stamp),
+                                       pos,amp,ampstd,amperr))
+            else:
+              print('WARNING: not all profiles have the same binning!' +
+                    ' Skipping slot %s, time stamp %s!'%(slot,time_stamp))
     # convert to a structured array and sort by time stamp
-    ftype=[('time_stamp',int), ('pos',np.ndarray), ('amp',np.ndarray)]
+    ftype=[('time_stamp',int), ('pos',np.ndarray), ('amp',np.ndarray),
+           ('ampstd',np.ndarray), ('amperr',np.ndarray)]
     for plane in ['h','v']:
-      for k in self.profiles_norm_avg[plane].keys():
-        self.profiles_norm_avg[plane][k] = np.array(
-            self.profiles_norm_avg[plane][k], dtype=ftype)
-    return self
-  def norm(self,verbose = True):
+      for k in pna[plane].keys():
+        pna[plane][k] = np.array(pna[plane][k], dtype=ftype)
+    return pna
+  def norm(self, nmvavg = 10, verbose = False):
     """
     Generate normalized and average of normalized profiles for each
     plane, slot and timestamp. Profiles are normalized to represent a 
@@ -471,6 +590,12 @@ class BSRTprofiles(object):
 
     Parameters:
     -----------
+    nmvavg : number of timestamps used for:
+                - moving average over profiles
+                - estimate of noise for each bin for profiles i = std over
+                  previous/following nmvavg profiles (-> in total
+                  nmvavg + 1 profiles)
+                Note: nmvavg must be an even number!
     verbose : verbose option for additional output
 
     Returns:
@@ -478,6 +603,8 @@ class BSRTprofiles(object):
     self : BSRTprofiles class object with recalculated 
         self.profiles_norm (normalized profiles) and 
         self.profiles_norm_avg (average normalized profile)
+        self.profiles_norm_mvavg (moving average over nmvavg +1 
+                                  normalized profile)
 
     Note:
     -----
@@ -487,8 +614,15 @@ class BSRTprofiles(object):
     self._norm_profiles(verbose=verbose)
     # self.profiles_norm_avg
     self._norm_avg_profiles(verbose=verbose)
+    # self.profiles_norm_mvavg
+    if self.nmvavg is not None:
+      print('WARNING: Changing self.nmvavg from %s '%(self.nmvavg) +
+            'to %s'%nmvavg)
+    self.nmvavg = nmvavg
+    if self.nmvavg is not None:
+      self._norm_mvavg_profiles(verbose=verbose)
     return self
-  def remove_background(self,verbose=False):
+  def remove_background(self,bgnavg = 10,verbose=False):
     """
     Removes the background from all normalized profiles.
     Estimate background by:
@@ -499,6 +633,8 @@ class BSRTprofiles(object):
 
     Parameters:
     -----------
+    bgnavg : estimate background by taking the average value over
+             the bgnavg most left and bgnavg most right bins
     verbose : verbose option for additional output
 
     Returns:
@@ -506,6 +642,10 @@ class BSRTprofiles(object):
     self : BSRTprofiles class object where the background is removed
         from all normalized profiles.
     """
+    if self.bgnavg is not None:
+      print('WARNING: Setting bgnavg to %s '%bgnavg +
+            'from previously %s'%self.bgnavg)
+    self.bgnavg = bgnavg
     if (self.profiles_norm is None) or (self.profiles_norm_avg is None):
       self = self.norm()
     if verbose:
@@ -640,7 +780,7 @@ class BSRTprofiles(object):
     return bsrt_lsf
       
   def get_stats(self,beam=None,db=None,slots=None,force=False,
-                verbose=False):
+                verbose=False,bgnavg = 10):
     """
     calculate statistical parameters for the average over all profiles
     for each timestamp.
@@ -659,6 +799,9 @@ class BSRTprofiles(object):
         or a local one from pagestore:
           db=pagestore.PageStore(dbfile,datadir,readonly=True)
     slots: slot numbers (single value or list)
+    bgnavg: average over first and last bgnavg bins of each
+            average profile (self.profiles_norm_avg) to obtain an
+            estimate for the background
     force: force recalculation
     verbose : verbose option for additional output
 
@@ -680,6 +823,10 @@ class BSRTprofiles(object):
                 sigma_beam = sqrt((sigma_bsrt)**2-(lsf)**2)
                 eps_beam = sigma_beam**2/beta/(beta_rel*gamma_rel)
     """
+    if self.bgnavg is not None and verbose:
+      print('... setting bgnavg to %s '%bgnavg +
+            'from previously %s'%self.bgnavg)
+    self.bgnavg = bgnavg
     # check of input parameters
     if beam is None:
       if verbose:
@@ -732,10 +879,10 @@ class BSRTprofiles(object):
         # 2) calculate/recalculate statistical parameters
         # initialize/delete old data
         self.profiles_stat[plane][slot] = []
-        for time_stamp in self.get_timestamps(slot=slot, plane=plane):
+        for time_stamp in self.get_timestamps(slot=slot,plane=plane):
           # average profile
           profs_norm_avg = self.get_profile_norm_avg(slot=slot,                  
-                             time_stamp=time_stamp, plane=plane)            
+                             time_stamp=time_stamp, plane=plane)
           # 1) estimate centroid with three different methods:
           # 1a) Gaussian fit (cent_gauss)
           # 1b) qGaussian fit (cent_qgauss)
@@ -794,8 +941,13 @@ class BSRTprofiles(object):
                                        [cmax,2,8,16]))
             profs_norm_gauss = tb.gauss_pdf(profs_norm_avg['pos'],*p)
             # h) calculate xi-squared
-            xisq_g = ((profs_norm_avg['amp']-profs_norm_gauss)**2/
-                     (profs_norm_gauss)).sum()
+            # - estimate noise by the standard deviation in each bin
+            #   over self.nmvavg measurements.
+            # - normalize by the nbins - nparam -> xisq_g in [0,1]
+            xisq_g = (((profs_norm_avg['amp']-profs_norm_gauss)/
+                     profs_norm_avg['ampstd'])**2).sum()
+            # nparam = 4 for Gaussian distribution
+            xisq_g = xisq_g/(len(profs_norm_avg['amp'])-4)
             # i) calculate the correlation matrix
             # corr(x,y) = sig_xy/(sigx*sigy)
             #           = sqrt(pcov(x,y)/(pcov(x,x)*pcov(y,y)))
@@ -847,8 +999,13 @@ class BSRTprofiles(object):
                                  [cmax,2,3,8,np.inf]))
             profs_norm_qgauss = tb.qgauss_pdf(profs_norm_avg['pos'],*p)
             # h) calculate xi-squared
-            xisq_qg = ((profs_norm_avg['amp']-profs_norm_qgauss)**2/
-                      (profs_norm_qgauss)).sum()
+            # - estimate noise by the standard deviation in each bin
+            #   over self.nmvavg measurements.
+            # - normalize by the nbins - nparam -> xisq_g in [0,1]
+            xisq_qg = (((profs_norm_avg['amp']-profs_norm_qgauss)/
+                     profs_norm_avg['ampstd'])**2).sum()
+            # nparam = 4 for Gaussian distribution
+            xisq_qg = xisq_qg/(len(profs_norm_avg['amp'])-5)
             # i) calculate the correlation matrix
             # corr(x,y) = sig_xy/(sigx*sigy)
             #           = sqrt(pcov(x,y)/(pcov(x,x)*pcov(y,y)))
@@ -923,7 +1080,7 @@ class BSRTprofiles(object):
           # f) peak of distribution
           cent_peak = x[y.argmax()]
           # background estimate
-          # average the last 10 bins
+          # average the first/last bgnavg bins
           bg_avg_left = y[:self.bgnavg].mean()
           bg_avg_right = y[-self.bgnavg:].mean()
           bg_avg = (bg_avg_left+bg_avg_right)/2
@@ -1085,12 +1242,34 @@ class BSRTprofiles(object):
     """
     get normalized profile data for slot *slot*, time stamp
     *time_stamp* as unix time [ns] and plane *plane*.
+
+    Parameter:
+    ----------
+    slot : slot number
+    plane : plane
+    time_stamp :
+       None : take first time stamp
+       float : one timestamp in ns
+       [t1,t2] : range of time stamps including t1,t2 (closed interval)
     """
     ts = self.get_timestamps(slot=slot,plane=plane)
-    if time_stamp not in ts:
-      raise ValueError('time stamp %s '%(time_stamp) + 'is not in ' +
-          'list of time stamps for slot %s and plane %s'%(slot,plane))
-    mask = self.profiles_norm[plane][slot]['time_stamp'] == time_stamp
+    # convert single time stamp to [t1,t2] = [time_stamp,time_stamp]
+    if not hasattr(time_stamp,"__iter__"):
+      if time_stamp is None:
+        time_stamp = ts[0]
+      if time_stamp not in ts:
+        raise ValueError('time stamp %s '%(time_stamp) + 'is not in ' +
+            'list of time stamps for slot %s and plane %s'%(slot,plane))
+      t1,t2 = time_stamp,time_stamp
+    # interval of time stamps
+    elif len(time_stamp) == 2:
+      t1,t2 = time_stamp
+    else:
+      raise ValueError('Only None, single time stamp or interval of ' +
+              'time stamps allowed for time_stamp')
+    # extract data
+    pn = self.profiles_norm[plane][slot]
+    mask = np.logical_and(pn['time_stamp']>=t1, pn['time_stamp']<=t2)
     if len(np.where(mask==True)[0]) == 1:
       return self.profiles_norm[plane][slot][mask][0]
     else:
@@ -1112,6 +1291,23 @@ class BSRTprofiles(object):
       return self.profiles_norm_avg[plane][slot][mask][0]
     else:
       return self.profiles_norm_avg[plane][slot][mask]
+  def get_profile_norm_mvavg(self, slot = None, time_stamp = None,
+                           plane = 'h'):                                    
+    """
+    returns moving averag of normalized profile for slot *slot*, time stamp
+    *time_stamp* as unix time [ns] and plane *plane*.
+    """
+    try:
+      mask = (self.profiles_norm_mvavg[plane][slot]['time_stamp'] 
+                == time_stamp)
+    except TypeError:
+      print('Data could not be extracted! Have you run ' +
+            'self.norm() to normalize profiles?')
+      return
+    if len(np.where(mask==True)[0]) == 1:
+      return self.profiles_norm_mvavg[plane][slot][mask][0]
+    else:
+      return self.profiles_norm_mvavg[plane][slot][mask]
   def get_profile_stat(self, slot = None, time_stamp = None, plane = 'h'):
     """
     get profile data for slot *slot*, time stamp *time_stamp* as
@@ -1123,7 +1319,8 @@ class BSRTprofiles(object):
     else:
       return self.profiles_stat[plane][slot][mask]
   def _plot_profile(self, slot = None, time_stamp = None, plane = 'h',
-                    norm = True, smooth = 0.025, verbose = False):
+                    norm = True, mvavg = False,
+                    smooth = 0.025, verbose = False):
     """
     Plot all profiles for specific slot and time. Plot title displays 
     'Europe/Zurich' time.
@@ -1139,6 +1336,10 @@ class BSRTprofiles(object):
                         norm_data = raw_data/(int(raw_data))
                      so that:
                         int(norm_data) = 1
+    mvavg : if mvavg = False plot average profile for each time stamp
+                       (self.profiles_norm_avg)
+            if mvavg = True plots moving average for each time stamp
+                       (self.profiles_norm_mvavg)
     smooth: parameter to smooth (only!) average profiles with lowess.
             smooth = 0 or smooth = None: no smoothing
             smooth > 0: 'frac' parameter in lowess (Between 0 and 1.
@@ -1157,7 +1358,11 @@ class BSRTprofiles(object):
     if norm:
       profs = self.get_profile_norm(slot=slot,time_stamp=time_stamp,
                                     plane=plane)
-      profs_avg = self.get_profile_norm_avg(slot=slot,
+      if mvavg is True:
+        profs_avg = self.get_profile_norm_mvavg(slot=slot,
+                          time_stamp=time_stamp,plane=plane)
+      else:
+        profs_avg = self.get_profile_norm_avg(slot=slot,
                           time_stamp=time_stamp,plane=plane)
       if self.profiles_stat is not None:
         stat_aux = self.get_profile_stat(slot=slot,
@@ -1258,7 +1463,7 @@ class BSRTprofiles(object):
     self._plot_profile(slot=slot,time_stamp=time_stamp,plane=plane,
                        norm=True,verbose=verbose)
   def plot_cumsum(self, slot = None, time_stamp = None, plane = 'h',
-                  verbose = False):
+                  mvavg = False, verbose = False):
     """
     Plot cumulative distribution function of normalized profiles for 
     a specific slot and time. Profiles are normalized to represent
@@ -1273,6 +1478,10 @@ class BSRTprofiles(object):
     slot : slot number
     time_stamp : time stamp in unix time
     plane : plane of profile, either 'h' or 'v'
+    mvavg : if mvavg = False plot average profile for each time stamp
+                       (self.profiles_norm_avg)
+            if mvavg = True plots moving average for each time stamp
+                       (self.profiles_norm_mvavg)
     verbose : verbose option for additional output
 
     Returns:
@@ -1283,7 +1492,11 @@ class BSRTprofiles(object):
     #select profile for slot and time stamp
     profs = self.get_profile_norm(slot=slot,time_stamp=time_stamp,
                                   plane=plane)
-    profs_avg = self.get_profile_norm_avg(slot=slot,
+    if mvavg is True:
+      profs_avg = self.get_profile_norm_mvavg(slot=slot,
+                       time_stamp=time_stamp,plane=plane)
+    else:
+      profs_avg = self.get_profile_norm_avg(slot=slot,
                        time_stamp=time_stamp,plane=plane)
     if self.profiles_stat is not None:
       sta = self.get_profile_stat(slot=slot,
@@ -1331,47 +1544,10 @@ class BSRTprofiles(object):
       pl.gca().set_title('slot %s, %s plane, %s'%(slot,
                           plane.upper(),ts))
     return check_plot
-  def plot_residual(self, slot = None, time_stamp = None, 
-                    time_stamp_ref = None, plane = 'h',
-                    verbose = False):
-    """
-    Plot residual of normalized profiles for a specific slot and time.
-    Plot title displays 'Europe/Zurich' time.
-
-    Parameters:
-    -----------
-    slot : slot number
-    time_stamp : time stamp in unix time [ns]
-    time_stamp_ref : reference time stamp in unix time [ns], if None
-                     use first time stamp
-    plane : plane of profile, either 'h' or 'v'
-    verbose : verbose option for additional output
-    """
-    self._plot_residual_ratio(flag='residual', flagprof='all', slot=slot,
-            time_stamp=time_stamp, time_stamp_ref=time_stamp_ref,
-            plane=plane, verbose=verbose)
-  def plot_ratio(self, slot = None, time_stamp = None, 
-                 time_stamp_ref = None, plane = 'h',
-                 verbose = False):
-    """
-    Plot ratio of normalized profiles for a specific slot and time.
-    Plot title displays 'Europe/Zurich' time.
-
-    Parameters:
-    -----------
-    slot : slot number
-    time_stamp : time stamp in unix time [ns]
-    time_stamp_ref : reference time stamp in unix time [ns], if None    
-                     use first time stamp                               
-    plane : plane of profile, either 'h' or 'v'
-    verbose : verbose option for additional output
-    """
-    self._plot_residual_ratio(flag='ratio', flagprof = 'all',slot=slot,
-            time_stamp=time_stamp, time_stamp_ref=time_stamp_ref,
-            plane=plane, verbose=verbose)
   def _plot_residual_ratio(self, flag, flagprof, slot = None,
           time_stamp = None, slot_ref = None, time_stamp_ref = None, 
-          plane = 'h', smooth = 0.025, verbose = False):
+          plane = 'h', mvavg = False, errbar = False, smooth = 0.025,
+          verbose = False):
     """
     Plot residual or ratio of normalized profiles for a specific slot 
     and time. Plot title displays 'Europe/Zurich' time.
@@ -1389,6 +1565,12 @@ class BSRTprofiles(object):
     time_stamp_ref : reference time stamp in unix time [ns], if None
                      use first time stamp of slot *slot_ref*
     plane : plane of profile, either 'h' or 'v'
+    mvavg : if mvavg = False plot average profile for each time stamp
+                       (self.profiles_norm_avg)
+            if mvavg = True plots moving average for each time stamp
+                       (self.profiles_norm_mvavg)
+    errbar : if errbar = True show error bars for residual
+             if errbar = False do not show error bars for residual
     smooth: parameter to smooth (only!) the average profile with lowess.
             smooth = 0 or None: no smoothing
             smooth > 0: 'frac' parameter in lowess (Between 0 and 1.
@@ -1415,9 +1597,15 @@ class BSRTprofiles(object):
       profs_ref     = self.get_profile_norm(slot=slot_ref,
                              time_stamp=time_stamp_ref, plane=plane)
     # average profiles
-    profs_avg     = self.get_profile_norm_avg(slot=slot,
-                           time_stamp=time_stamp, plane=plane)
-    profs_ref_avg = self.get_profile_norm_avg(slot=slot_ref,
+    if mvavg is True:
+      profs_avg     = self.get_profile_norm_mvavg(slot=slot,
+                             time_stamp=time_stamp, plane=plane)
+      profs_ref_avg = self.get_profile_norm_mvavg(slot=slot_ref,
+                           time_stamp=time_stamp_ref, plane=plane)
+    else:
+      profs_avg     = self.get_profile_norm_avg(slot=slot,
+                             time_stamp=time_stamp, plane=plane)
+      profs_ref_avg = self.get_profile_norm_avg(slot=slot_ref,
                            time_stamp=time_stamp_ref, plane=plane)
     # smooth profiles
     if (smooth < 0) or (smooth >= 1):
@@ -1459,11 +1647,23 @@ class BSRTprofiles(object):
           check_plot = False
           pass
     #  average profile
+    # shorten the names
+    pos_avg = profs_avg['pos'][mask]
+    amp_avg = profs_avg['amp'][mask]
+    sig_avg = profs_avg['amperr'][mask]
+    amp_ref = profs_ref_avg['amp'][mask_ref]
+    sig_ref = profs_ref_avg['amperr'][mask_ref]
     if flag == 'residual':
       try:
-        pl.plot(profs_avg['pos'][mask],
-                profs_avg['amp'][mask]-profs_ref_avg['amp'][mask_ref],
+        # plot error of residual as one sigma envelope
+        # res_error = sqrt(sig(profs_avg)**2+sig(profs_avg_ref)**2)
+        pl.plot(pos_avg,amp_avg-amp_ref,
                 label = 'average profile',color='k',linestyle='-')
+        if errbar:
+          sig = np.sqrt(sig_avg**2+sig_ref**2)
+          res = amp_avg - amp_ref
+          pl.fill_between(profs_avg['pos'][mask],res-sig,res+sig,
+                  alpha=0.2,color='k')
         if self.profiles_stat is not None:
           sta = self.get_profile_stat(slot=slot,
                        time_stamp=time_stamp,plane=plane)
@@ -1476,16 +1676,14 @@ class BSRTprofiles(object):
           q_qgauss = sta['q_qgauss']
           cent_qgauss = sta['cent_qgauss']
           beta_qgauss    = sta['sigma_qgauss']
-          pl.plot(profs_avg['pos'][mask],
-                  profs_avg['amp'][mask]-
-                  tb.gauss_pdf(profs_avg['pos'][mask],sta['c_gauss'],
+          pl.plot(pos_avg,amp_avg-
+                  tb.gauss_pdf(pos_avg,sta['c_gauss'],
                     sta['a_gauss'],sta['cent_gauss'],
                     sta['sigma_gauss']),
                   label = 'Gaussian fit',
                   color=fit_colors['Red'],linestyle='--')
-          pl.plot(profs_avg['pos'][mask],
-                  profs_avg['amp'][mask]-
-                  tb.qgauss_pdf(profs_avg['pos'][mask],sta['c_qgauss'],
+          pl.plot(pos_avg,amp_avg-
+                  tb.qgauss_pdf(pos_avg,sta['c_qgauss'],
                     sta['a_qgauss'],sta['q_qgauss'],
                     sta['cent_qgauss'],sta['beta_qgauss']), 
                   label = 'q-Gaussian fit',
@@ -1495,9 +1693,14 @@ class BSRTprofiles(object):
         pass
     if flag == 'ratio':
       try:
-        pl.plot(profs_avg['pos'][mask],
-                profs_avg['amp'][mask]/profs_ref_avg['amp'][mask_ref],
+        pl.plot(pos_avg,amp_avg/amp_ref,
                 label = 'average profile',color='k',linestyle='-')
+        if errbar:
+          rat = amp_avg/amp_ref
+          sig = np.abs(rat)*np.sqrt((sig_avg/amp_avg)**2
+                                    +(sig_ref/amp_ref)**2)
+          pl.fill_between(pos_avg,rat-sig,rat+sig,
+                  alpha=0.2,color='k')
       except (ValueError,IndexError):
         check_plot = False
         pass
@@ -1517,7 +1720,8 @@ class BSRTprofiles(object):
     return check_plot
   def plot_all(self,slot = None, time_stamp = None, slot_ref = None,
                time_stamp_ref = None, plane = 'h', norm = True, 
-               smooth = 0.025, log = True, verbose = False):
+               mvavg = False, errbar = False, smooth = 0.025, log = True,
+               verbose = False):
     """
     plot normalized or raw data profiles, cumulative distribution 
     function, residual and ratio in respect to reference distribution
@@ -1536,10 +1740,16 @@ class BSRTprofiles(object):
                         norm_data = raw_data/(int(raw_data))
                      so that:
                         int(norm_data) = 1
+    mvavg : if mvavg = False plot average profile for each time stamp
+                       (self.profiles_norm_avg)
+            if mvavg = True plots moving average for each time stamp
+                       (self.profiles_norm_mvavg)
     smooth: parameter to smooth profiles with lowess.
             smooth = 0 or smooth = None: no smoothing
             smooth > 0: 'frac' parameter in lowess (Between 0 and 1.
             The fraction of the data used when estimating each y-value.)
+    errbar : if errbar = True show error bars for residual
+             if errbar = False do not show error bars for residual
     log: plot profile in log scale
     verbose : verbose option for additional output
     
@@ -1547,6 +1757,11 @@ class BSRTprofiles(object):
     --------
     flaux : bool, flag to check if profile plots have failed
     """
+    # check that options are compatible
+    if ((mvavg is True) or (errbar is True)) and (norm is False):
+      print('ERROR: norm must be True for options mvavg = True or ' +
+            'errbar = True!')
+      return
     pl.clf()
     fig = pl.gcf()
     nsub = 4 # number of subplots
@@ -1585,14 +1800,16 @@ class BSRTprofiles(object):
     pl.subplot(221)
     self._plot_residual_ratio(flag='residual', flagprof='avg', 
            slot=slot, time_stamp=time_stamp, slot_ref=slot_ref,
-           time_stamp_ref=time_stamp_ref, plane=plane, smooth=smooth,
+           time_stamp_ref=time_stamp_ref, plane=plane, mvavg = mvavg,
+           errbar=errbar, smooth=smooth,
            verbose=verbose)
-    pl.gca().set_ylim(-0.05,0.05)
+    pl.gca().set_ylim(-0.07,0.07)
 #     4) ratio
     pl.subplot(222)
     self._plot_residual_ratio(flag='ratio', flagprof='avg', 
            slot=slot, time_stamp=time_stamp, slot_ref=slot_ref,
-           time_stamp_ref=time_stamp_ref, plane=plane, smooth=smooth,
+           time_stamp_ref=time_stamp_ref, plane=plane, mvavg=mvavg, 
+           errbar=errbar, smooth=smooth,
            verbose=verbose)
     pl.gca().set_ylim(-1,6)
     # remove subplot titles, shring legend size and put it on top of
@@ -1608,7 +1825,8 @@ class BSRTprofiles(object):
     fig.tight_layout()
     return flaux
   def mk_profile_video(self, slots = None, t1=None, t2=None,
-                       slot_ref=None, norm = True, smooth=0.025,
+                       slot_ref=None, norm = True, 
+                       mvavg = True, errbar = True, smooth=None,
                        plt_dir='BSRTprofile_gifs', delay=20, 
                        export=False,verbose=False):
     """
@@ -1637,10 +1855,17 @@ class BSRTprofiles(object):
                         norm_data = raw_data/(int(raw_data))
                      so that:
                         int(norm_data) = 1
+    mvavg : if mvavg = False plot average profile for each time stamp
+                       (self.profiles_norm_avg)
+            if mvavg = True plots moving average for each time stamp
+                       (self.profiles_norm_mvavg)
+    errbar : if errbar = True show error bars for residual
+             if errbar = False do not show error bars for residual
     smooth: parameter to smooth profiles with lowess.
             smooth = 0: no smoothing
             smooth > 0: 'frac' parameter in lowess (Between 0 and 1.
             The fraction of the data used when estimating each y-value.)
+            Good values are achieved for smooth =0.025
     plt_dir : directory to save videos
     delay : option for convert to define delay between pictures
     export : If True do not delete png files
@@ -1668,7 +1893,7 @@ class BSRTprofiles(object):
           t2 = time_stamps[-1]
         time_stamps = time_stamps[(time_stamps >= t1) & 
                                   (time_stamps <= t2)]
-        if (len(time_stamps) == 0) and verbose:                                                 
+        if (len(time_stamps) == 0):                                                 
           print('WARNING: no time stamps found for slot %s, '%slot +
                 'plane %s and (t1,t2)=(%s,%s)'%(plane,t1,t2))
           continue       
@@ -1701,7 +1926,8 @@ class BSRTprofiles(object):
           pl.clf()
           flaux = self.plot_all(slot=slot,time_stamp=time_stamp,
                       slot_ref=slot_ref,time_stamp_ref=time_stamp_ref,
-                      plane=plane,norm=norm,smooth=smooth)
+                      plane=plane,norm=norm,mvavg=mvavg,errbar=errbar,
+                      smooth=smooth)
           # if plot failed, flaux = False -> append t check_plot
           if flaux is False: check_plot[plane][slot].append(time_stamp)
           fnpl = os.path.join(tmpdir,'slot_%s_plane_%s_%05d.png'%(slot,
