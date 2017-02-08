@@ -85,7 +85,7 @@ class BSRTprofiles(object):
   profiles_norm_avg : same fromat as profile. Contains for each plane,
       slot and timestamp the average of all normalized profiles for
       this time stamp.
-  profiles_stat: statistical parameters calculated for average profile
+  profiles_avg_stat: statistical parameters calculated for average profile
       for each timestamp
 
   Methods:
@@ -134,7 +134,7 @@ class BSRTprofiles(object):
 
   def __init__(self, records=None, profiles=None, profiles_norm=None,
                profiles_norm_avg=None, profiles_norm_mvavg=None, 
-               profiles_stat=None,
+               profiles_avg_stat=None, profiles_mvavg_stat=None,
                bgnavg = None, nmvavg = None):
     self.records   = records
     if self.records is None:
@@ -145,14 +145,18 @@ class BSRTprofiles(object):
     self.profiles_norm = profiles_norm
     self.profiles_norm_avg = profiles_norm_avg
     self.profiles_norm_mvavg = profiles_norm_avg
-    self.profiles_stat = profiles_stat
-    if self.profiles_stat is None:
-      self.profiles_stat_var = None
+    self.profiles_avg_stat = profiles_avg_stat
+    self.profiles_mvavg_stat = profiles_avg_stat
+    if self.profiles_avg_stat is None:
+      self.profiles_avg_stat_var = None
+    if self.profiles_mvavg_stat is None:
+      self.profiles_mvavg_stat_var = None
     else:
       # take first plane and slot in order to get profile_stat named fields
-      plane_aux = self.profiles_stat.keys()[0]
-      slot_aux = self.profiles_stat[plane_aux].keys()[0] 
-      self.profiles_stat_var = self.profiles_stat[plane_aux][slot_aux].dtype.names
+      plane_aux = self.profiles_avg_stat.keys()[0]
+      slot_aux = self.profiles_avg_stat[plane_aux].keys()[0] 
+      self.profiles_avg_stat_var = self.profiles_avg_stat[plane_aux][slot_aux].dtype.names
+      self.profiles_mvavg_stat_var = self.profiles_mvavg_stat[plane_aux][slot_aux].dtype.names
     # -- background estimate
     # internal flag to check if background has been removed
     self._rm_bg = False
@@ -495,7 +499,7 @@ class BSRTprofiles(object):
       for slot in self.profiles_norm[plane].keys():
         pna[plane][slot]=[]
         ts = self.get_timestamps(slot=slot,plane=plane)
-        # check that there are enough time stamps for nmavg
+        # check that there are enough time stamps for nmvavg
         if (nmvavg is not None) and (nmvavg + 1 > len(ts)):
           raise ValueError('not enought profiles for nmvavg = %s'%nmvavg)
         for time_stamp,ts_idx in zip(ts,xrange(len(ts))):
@@ -808,7 +812,7 @@ class BSRTprofiles(object):
     Returns:
     --------
     self : BSRTprofiles class object with recalculated 
-           self.profiles_stat
+           self.profiles_avg_stat
 
     describe all statistical parameters
     cor_fac: correction factor to convert profile sigma to beam
@@ -846,10 +850,14 @@ class BSRTprofiles(object):
     if self.profiles_norm_avg is None:
       self.norm(verbose=verbose)
     # initialize if data is empty
-    if self.profiles_stat is None:
-      self.profiles_stat={}
-      self.profiles_stat['h']={}
-      self.profiles_stat['v']={}
+    if self.profiles_avg_stat is None:
+      self.profiles_avg_stat={}
+      self.profiles_avg_stat['h']={}
+      self.profiles_avg_stat['v']={}
+    if self.profiles_mvavg_stat is None:
+      self.profiles_mvavg_stat={}
+      self.profiles_mvavg_stat['h']={}
+      self.profiles_mvavg_stat['v']={}
     # get lsf factor, beta@BSRT and energy from logging databse
     # get lsf correction factor, beta function and beam energy
     if (beam is not None) and (beam.upper() in ['B1','B2']):
@@ -874,15 +882,14 @@ class BSRTprofiles(object):
         if verbose:
           print('... start slot %s'%slot)
         # 1) data is already calculated + force = False-> go to next slot
-        if (slot in self.profiles_stat[plane].keys()) and (force is False):
+        if ((slot in self.profiles_avg_stat[plane].keys()) and 
+            (slot in self.profiles_mvavg_stat[plane].keys()) and (force is False)):
           continue
         # 2) calculate/recalculate statistical parameters
         # initialize/delete old data
-        self.profiles_stat[plane][slot] = []
+        self.profiles_avg_stat[plane][slot] = []
+        self.profiles_mvavg_stat[plane][slot] = []
         for time_stamp in self.get_timestamps(slot=slot,plane=plane):
-          # average profile
-          profs_norm_avg = self.get_profile_norm_avg(slot=slot,                  
-                             time_stamp=time_stamp, plane=plane)
           # 1) estimate centroid with three different methods:
           # 1a) Gaussian fit (cent_gauss)
           # 1b) qGaussian fit (cent_qgauss)
@@ -909,260 +916,272 @@ class BSRTprofiles(object):
           # 5) goodness of fit parameters:
           # 5h) calculate xi^2
           # 5i) calculate correlation matrix
-
-          # a) Gaussian fit
-          # assume initial values of
-          # c=0,a=1,mu=0,sig=2
-          # fit function =
-          #   c+a*1/sqrt(2*sig**2*pi)*exp(((x-mu)/sig)**2/2)
-          # c is also an estimate for the background
-          # a compensate for c0 so that the integral over the
-          # the distribution is equal to 1. If c is small, a should be
-          # close to 1
-          # -- limits for c,a:
-          #    background is usually around 0.008 
-          #        -> limit c to [-0.1,0.1]
-          #        -> limit a to [0,2]
-          #    allow for negative values if background is subtracted
-          #    as background values could then also become negative
-          #    as the average over the whole fill for each bunch is
-          #    subtracted
-          # -- limits for cent,sigma:
-          #    centroid shouldn't exceed maximum range of profile, which
-          #    is approximately [-8,8]
-          try:
-            if self._rm_bg is False:
-              cmin,cmax = [0,0.1]
-            else:
-              cmin,cmax = [-0.1,0.1]
-            p,pcov_g = curve_fit(tb.gauss_pdf,profs_norm_avg['pos'],
-                               profs_norm_avg['amp'],p0=[0,1,0,2],
-                               bounds=([cmin,0,-8,0],
-                                       [cmax,2,8,16]))
-            profs_norm_gauss = tb.gauss_pdf(profs_norm_avg['pos'],*p)
-            # h) calculate xi-squared
-            # - estimate noise by the standard deviation in each bin
-            #   over self.nmvavg measurements.
-            # - normalize by the nbins - nparam -> xisq_g in [0,1]
-            xisq_g = (((profs_norm_avg['amp']-profs_norm_gauss)/
-                     profs_norm_avg['ampstd'])**2).sum()
-            # nparam = 4 for Gaussian distribution
-            xisq_g = xisq_g/(len(profs_norm_avg['amp'])-4)
-            # i) calculate the correlation matrix
-            # corr(x,y) = sig_xy/(sigx*sigy)
-            #           = sqrt(pcov(x,y)/(pcov(x,x)*pcov(y,y)))
-            pcorr_g = np.array([ [ 
-                       pcov_g[i,j]/np.sqrt(pcov_g[i,i]*pcov_g[j,j]) 
-                       for j in range(len(p))] for i in range(len(p))])
-            # error on p
-            psig = [ np.sqrt(pcov_g[i,i]) for i in range(len(p)) ]
-            c_gauss, a_gauss = p[0], p[1]
-            cent_gauss, sigma_gauss = p[2],p[3]
-            c_gauss_err, a_gauss_err = psig[0], psig[1]
-            cent_gauss_err, sigma_gauss_err = psig[2],psig[3]
-          except RuntimeError:
-            if verbose:
-              print("WARNING: Gaussian fit failed for " +
-                    "plane %s, slotID %s and "%(plane,slot) +
-                    "timestamp %s"%(time_stamp))
-            c_gauss, a_gauss, cent_gauss, sigma_gauss = 0,0,0,0
-            c_gauss_err, a_gauss_err = 0,0
-            cent_gauss_err, sigma_gauss_err = 0,0
-            pass
-          # b) qGaussian fit, note that 1 < q < 3 -> constraint fit
-          #    parameters
-          # fit function =
-          #   c+a*sqrt(beta)/cq*eq(-beta*(x-mu)**2)
-          # -- cq is also an estimate for the background
-          #    a compensate for c0 so that the integral over the
-          #    the distribution is equal to 1. If c0 is small, a should be
-          #    close to 1
-          # -- limits for c,a:
-          #    background is usually around 0.008 
-          #        -> limit c to [-0.1,0.1]
-          #        -> limit a to [0,2]
-          #    allow for negative values if background is subtracted
-          #    as background values could then also become negative
-          #    as the average over the whole fill for each bunch is
-          #    subtracted
-          # -- limits for cent:
-          #    centroid shouldn't exceed maximum range of profile, which
-          #    is approximately [-8,8]
-          try:
-            if self._rm_bg is False:
-              cmin,cmax = [0,0.1]
-            else:
-              cmin,cmax = [-0.1,0.1]
-            p,pcov_qg = curve_fit(tb.qgauss_pdf,profs_norm_avg['pos'],
-                               profs_norm_avg['amp'],
-                               bounds=([cmin,0,1,-8,0],
-                                 [cmax,2,3,8,np.inf]))
-            profs_norm_qgauss = tb.qgauss_pdf(profs_norm_avg['pos'],*p)
-            # h) calculate xi-squared
-            # - estimate noise by the standard deviation in each bin
-            #   over self.nmvavg measurements.
-            # - normalize by the nbins - nparam -> xisq_g in [0,1]
-            xisq_qg = (((profs_norm_avg['amp']-profs_norm_qgauss)/
-                     profs_norm_avg['ampstd'])**2).sum()
-            # nparam = 4 for Gaussian distribution
-            xisq_qg = xisq_qg/(len(profs_norm_avg['amp'])-5)
-            # i) calculate the correlation matrix
-            # corr(x,y) = sig_xy/(sigx*sigy)
-            #           = sqrt(pcov(x,y)/(pcov(x,x)*pcov(y,y)))
-            pcorr_qg = np.array([ [ 
-                       pcov_qg[i,j]/np.sqrt(pcov_qg[i,i]*pcov_qg[j,j]) 
-                       for j in range(len(p))] for i in range(len(p))])
-            # error on p
-            psig = [ np.sqrt(pcov_qg[i,i]) for i in range(len(p)) ]
-            pcov_beta_q = pcov_qg[2,4]
-            c_qgauss, a_qgauss = p[0], p[1]
-            q_qgauss = p[2]
-            cent_qgauss, beta_qgauss = p[3], p[4]
-            c_qgauss_err, a_qgauss_err = psig[0], psig[1]
-            q_qgauss_err = psig[2]
-            cent_qgauss_err, beta_qgauss_err = psig[3],psig[4]
-            # sigma**2 = 1/(beta*(5-3q)) for q < 5/3
-            # sigma**2 = infty for 5/3 <= q < 2
-            # undefined for 2<= q < 3
-            if (q_qgauss > 1) & (q_qgauss < 5/3.):
-              sigma_qgauss = np.sqrt( 1/(beta_qgauss*(5-3*q_qgauss)) )
-              # sigma_f**2 = 
-              #   |df/da|**2*sigma_a**2+|df/db|**2*sigma_b**2
-              #   + 2*(df/da)*(df/db)*sigma_ab
-              # pcov_beta_q = covariance entry beta_q 
-              var_qgauss_err = ( (1/(4*beta_qgauss**3*(5-3*q_qgauss))
-                   *beta_qgauss_err**2) +
-                (9/(4*beta_qgauss*(5-3*q_qgauss)**3)
-                   *q_qgauss_err**2) +
-                (3/(4*beta_qgauss**2*(5-3*q_qgauss)**2))*pcov_beta_q )
-              sigma_qgauss_err = np.sqrt(var_qgauss_err)
-            elif (q_qgauss >= 5/3.) & (q_qgauss < 2):
-              sigma_qgauss = np.inf
-              sigma_qgauss_err = np.inf
-            else:
-              sigma_qgauss = 0
-              sigma_qgauss_err = 0
-          except RuntimeError,RuntimeWarning:
-            if verbose:
-              print("WARNING: q-Gaussian fit failed for " +
-                    "plane %s, slotID %s and "%(plane,slot) +
-                    "timestamp %s"%(time_stamp))
-            c_qgauss, a_qgauss, q_qgauss = 0,0,0
-            cent_qgauss, sigma_qgauss = 0,0
-            c_qgauss_err, a_qgauss_err, q_qgauss_err = 0,0,0
-            cent_qgauss_err, sigma_qgauss_err = 0,0
-            pass
-          x,y = profs_norm_avg['pos'],profs_norm_avg['amp']
-          sum_y = y.sum()
-          dx = x[1] - x[0]
-          # c) statistical parameters
-          # -- weighted average
-          cent_stat  = (x*y).sum()/sum_y
-          sigma_stat = np.sqrt((y*(x-cent_stat)**2).sum()/sum_y)
-          # d) median
-          cent_median  = tb.median(x,y)
-          # assume normal distributed
-          # -> sigma = 1.4826*MAD (median absolute deviation)
-          mad = tb.mad(x,cent_median,y)
-          sigma_median = 1.4826*mad
-          # e) cumulative sum
-          cumsum_sigma_left = 0.5 - cumsum_1sigma/2
-          cumsum_sigma_right = 0.5 + cumsum_1sigma/2
-          cumsum_y = dx*y.cumsum()
-          cumsum_idx_50 = (np.abs(cumsum_y-0.5)).argmin()
-          cumsum_idx_sigma_32 = (np.abs(cumsum_y-
-          cumsum_sigma_left)).argmin()
-          cumsum_idx_sigma_68 = (np.abs(cumsum_y-
-          cumsum_sigma_right)).argmin()
-          cent_cumsum = x[cumsum_idx_50]
-          sigma_cumsum_32 = cent_cumsum-x[cumsum_idx_sigma_32]
-          sigma_cumsum_68 = x[cumsum_idx_sigma_68] - cent_cumsum
-          # f) peak of distribution
-          cent_peak = x[y.argmax()]
-          # background estimate
-          # average the first/last bgnavg bins
-          bg_avg_left = y[:self.bgnavg].mean()
-          bg_avg_right = y[-self.bgnavg:].mean()
-          bg_avg = (bg_avg_left+bg_avg_right)/2
-          # g) emittance
-          # if no beam is given
-          (emit_gauss,emit_qgauss,emit_stat,emit_median,
-          emit_cumsum_32,emit_cumsum_68) = (0,)*6
-          # if beam given convert picture sigma to beam sigma and then 
-          # to normalized emittance
-          if (beam is not None) and (beam.upper() in ['B1','B2']):
-            # get lsf,beta and energy with time stamp closest to
-            # time_stamp and smaller than time_stamp
-            bsrt_lsf = {}
-            for k in lsf_var[plane],beta_var[plane],energy_var:
-              idx = np.where(time_stamp-bsrt_lsf_db[k][0]>=0.)[0][-1] 
-              bsrt_lsf[k] = bsrt_lsf_db[k][1][idx]
-            # convert sigma to emittance
-            emit_norm = []
-            for sigma in [sigma_gauss,sigma_qgauss,sigma_stat,
-              sigma_median,sigma_cumsum_32,sigma_cumsum_68]:
-              # geometric emittance
-              emit_geom = ((sigma**2 - bsrt_lsf[lsf_var[plane]]**2)/
-                           bsrt_lsf[beta_var[plane]]) 
-              emit_norm.append(pytimber.toolbox.emitnorm(emit_geom,
-                              bsrt_lsf[energy_var],m0=938.272046))
-            [emit_gauss,emit_qgauss,emit_stat,emit_median,
-                          emit_cumsum_32,emit_cumsum_68] = emit_norm
-          # estimate of halo
-          # y) sum bins between x_min mm and x_max mm
-          #    sum bins between -x_min mm and -x_max mm (remember bump  
-          #      on right side of profile, so better do individual sums)
-          x_min,x_max = 3,6
-          mask_r = np.logical_and(profs_norm_avg['pos'] < x_max,
-                            profs_norm_avg['pos'] > x_min)
-          mask_l = np.logical_and(profs_norm_avg['pos'] < -x_min,
-                            profs_norm_avg['pos'] > -x_max)
-          sum_bin_left = profs_norm_avg['amp'][mask_l].sum() 
-          sum_bin_right = profs_norm_avg['amp'][mask_r].sum() 
-          # z) calculate the entropy and divide by the total entropy
-          #      entropie = -sum_(k=0)^(nbins) p_k ln(p_k)
-          #    where p_k is the bin height
-          #    Now normalize in addition to the maximum entropie = 
-          #    entropie for which all bins have the same height
-          #      entropie_max = -sum_(k=0)^(nbins) 1/nbins * ln(1/nbins)
-          #                   = -nbins*1/nbins*ln(1/nbins)
-          #                   = ln(nbins)
-          #    => entropie_norm = -(1/ln(nbins))*
-          #                               sum_(k=0)^(nbins) p_k ln(p_k)
-          #    For the case with removed background the bin amplitudes
-          #    can be negative, so this only works if the background is
-          #    not removed.
-          #    Even without background removal bins can be negative
-          #    -> take as quick fix the absolute value
-          if self._rm_bg is False:
-            nbins = len(profs_norm_avg['pos'])
-            entropie = -(1/np.log(nbins))*(profs_norm_avg['amp']*
-                           np.log(np.abs(profs_norm_avg['amp']))).sum()
-          else:
-            entropie = 0
-          self.profiles_stat[plane][slot].append((time_stamp,
-            # Gaussian fit
-            c_gauss, a_gauss, cent_gauss, sigma_gauss,
-            pcov_g, pcorr_g, xisq_g,
-            c_gauss_err, a_gauss_err, cent_gauss_err, sigma_gauss_err,
-            # q-Gaussian fit
-            c_qgauss, a_qgauss, q_qgauss, cent_qgauss, beta_qgauss,
-            sigma_qgauss,
-            pcov_qg, pcorr_qg, xisq_qg,
-            c_qgauss_err, a_qgauss_err, q_qgauss_err, cent_qgauss_err,
-            beta_qgauss_err, sigma_qgauss_err,
-            # statistical parameters
-            cent_stat, sigma_stat, cent_median, mad, sigma_median,
-            cent_cumsum, sigma_cumsum_32, sigma_cumsum_68,
-            cent_peak,
-            # normalized emittance
-            emit_gauss,emit_qgauss,emit_stat,emit_median,
-            emit_cumsum_32,emit_cumsum_68,
+          
+          # average profile
+          profs_norm_avg = self.get_profile_norm_avg(slot=slot,                  
+                             time_stamp=time_stamp, plane=plane)
+          # moving average profile
+          profs_norm_mvavg = self.get_profile_norm_mvavg(slot=slot,                  
+                             time_stamp=time_stamp, plane=plane)
+          for pna,avgflag in zip([profs_norm_avg,profs_norm_mvavg],
+                                 ['avg','mvavg']):
+            # a) Gaussian fit
+            # assume initial values of
+            # c=0,a=1,mu=0,sig=2
+            # fit function =
+            #   c+a*1/sqrt(2*sig**2*pi)*exp(((x-mu)/sig)**2/2)
+            # c is also an estimate for the background
+            # a compensate for c0 so that the integral over the
+            # the distribution is equal to 1. If c is small, a should be
+            # close to 1
+            # -- limits for c,a:
+            #    background is usually around 0.008 
+            #        -> limit c to [-0.1,0.1]
+            #        -> limit a to [0,2]
+            #    allow for negative values if background is subtracted
+            #    as background values could then also become negative
+            #    as the average over the whole fill for each bunch is
+            #    subtracted
+            # -- limits for cent,sigma:
+            #    centroid shouldn't exceed maximum range of profile, which
+            #    is approximately [-8,8]
+            try:
+              if self._rm_bg is False:
+                cmin,cmax = [0,0.1]
+              else:
+                cmin,cmax = [-0.1,0.1]
+              p,pcov_g = curve_fit(tb.gauss_pdf,pna['pos'],
+                                 pna['amp'],p0=[0,1,0,2],
+                                 bounds=([cmin,0,-8,0],
+                                         [cmax,2,8,16]))
+              profs_norm_gauss = tb.gauss_pdf(pna['pos'],*p)
+              # h) calculate xi-squared
+              # - estimate noise by the standard deviation in each bin
+              #   over self.nmvavg measurements.
+              # - normalize by the nbins - nparam -> xisq_g in [0,1]
+              xisq_g = (((pna['amp']-profs_norm_gauss)/
+                       pna['ampstd'])**2).sum()
+              # nparam = 4 for Gaussian distribution
+              xisq_g = xisq_g/(len(pna['amp'])-4)
+              # i) calculate the correlation matrix
+              # corr(x,y) = sig_xy/(sigx*sigy)
+              #           = sqrt(pcov(x,y)/(pcov(x,x)*pcov(y,y)))
+              pcorr_g = np.array([ [ 
+                         pcov_g[i,j]/np.sqrt(pcov_g[i,i]*pcov_g[j,j]) 
+                         for j in range(len(p))] for i in range(len(p))])
+              # error on p
+              psig = [ np.sqrt(pcov_g[i,i]) for i in range(len(p)) ]
+              c_gauss, a_gauss = p[0], p[1]
+              cent_gauss, sigma_gauss = p[2],p[3]
+              c_gauss_err, a_gauss_err = psig[0], psig[1]
+              cent_gauss_err, sigma_gauss_err = psig[2],psig[3]
+            except RuntimeError:
+              if verbose:
+                print("WARNING: Gaussian fit failed for " +
+                      "plane %s, slotID %s and "%(plane,slot) +
+                      "timestamp %s"%(time_stamp))
+              c_gauss, a_gauss, cent_gauss, sigma_gauss = 0,0,0,0
+              c_gauss_err, a_gauss_err = 0,0
+              cent_gauss_err, sigma_gauss_err = 0,0
+              pass
+            # b) qGaussian fit, note that 1 < q < 3 -> constraint fit
+            #    parameters
+            # fit function =
+            #   c+a*sqrt(beta)/cq*eq(-beta*(x-mu)**2)
+            # -- cq is also an estimate for the background
+            #    a compensate for c0 so that the integral over the
+            #    the distribution is equal to 1. If c0 is small, a should be
+            #    close to 1
+            # -- limits for c,a:
+            #    background is usually around 0.008 
+            #        -> limit c to [-0.1,0.1]
+            #        -> limit a to [0,2]
+            #    allow for negative values if background is subtracted
+            #    as background values could then also become negative
+            #    as the average over the whole fill for each bunch is
+            #    subtracted
+            # -- limits for cent:
+            #    centroid shouldn't exceed maximum range of profile, which
+            #    is approximately [-8,8]
+            try:
+              if self._rm_bg is False:
+                cmin,cmax = [0,0.1]
+              else:
+                cmin,cmax = [-0.1,0.1]
+              p,pcov_qg = curve_fit(tb.qgauss_pdf,pna['pos'],
+                                 pna['amp'],
+                                 bounds=([cmin,0,1,-8,0],
+                                   [cmax,2,3,8,np.inf]))
+              profs_norm_qgauss = tb.qgauss_pdf(pna['pos'],*p)
+              # h) calculate xi-squared
+              # - estimate noise by the standard deviation in each bin
+              #   over self.nmvavg measurements.
+              # - normalize by the nbins - nparam -> xisq_g in [0,1]
+              xisq_qg = (((pna['amp']-profs_norm_qgauss)/
+                       pna['ampstd'])**2).sum()
+              # nparam = 4 for Gaussian distribution
+              xisq_qg = xisq_qg/(len(pna['amp'])-5)
+              # i) calculate the correlation matrix
+              # corr(x,y) = sig_xy/(sigx*sigy)
+              #           = sqrt(pcov(x,y)/(pcov(x,x)*pcov(y,y)))
+              pcorr_qg = np.array([ [ 
+                         pcov_qg[i,j]/np.sqrt(pcov_qg[i,i]*pcov_qg[j,j]) 
+                         for j in range(len(p))] for i in range(len(p))])
+              # error on p
+              psig = [ np.sqrt(pcov_qg[i,i]) for i in range(len(p)) ]
+              pcov_beta_q = pcov_qg[2,4]
+              c_qgauss, a_qgauss = p[0], p[1]
+              q_qgauss = p[2]
+              cent_qgauss, beta_qgauss = p[3], p[4]
+              c_qgauss_err, a_qgauss_err = psig[0], psig[1]
+              q_qgauss_err = psig[2]
+              cent_qgauss_err, beta_qgauss_err = psig[3],psig[4]
+              # sigma**2 = 1/(beta*(5-3q)) for q < 5/3
+              # sigma**2 = infty for 5/3 <= q < 2
+              # undefined for 2<= q < 3
+              if (q_qgauss > 1) & (q_qgauss < 5/3.):
+                sigma_qgauss = np.sqrt( 1/(beta_qgauss*(5-3*q_qgauss)) )
+                # sigma_f**2 = 
+                #   |df/da|**2*sigma_a**2+|df/db|**2*sigma_b**2
+                #   + 2*(df/da)*(df/db)*sigma_ab
+                # pcov_beta_q = covariance entry beta_q 
+                var_qgauss_err = ( (1/(4*beta_qgauss**3*(5-3*q_qgauss))
+                     *beta_qgauss_err**2) +
+                  (9/(4*beta_qgauss*(5-3*q_qgauss)**3)
+                     *q_qgauss_err**2) +
+                  (3/(4*beta_qgauss**2*(5-3*q_qgauss)**2))*pcov_beta_q )
+                sigma_qgauss_err = np.sqrt(var_qgauss_err)
+              elif (q_qgauss >= 5/3.) & (q_qgauss < 2):
+                sigma_qgauss = np.inf
+                sigma_qgauss_err = np.inf
+              else:
+                sigma_qgauss = 0
+                sigma_qgauss_err = 0
+            except RuntimeError,RuntimeWarning:
+              if verbose:
+                print("WARNING: q-Gaussian fit failed for " +
+                      "plane %s, slotID %s and "%(plane,slot) +
+                      "timestamp %s"%(time_stamp))
+              c_qgauss, a_qgauss, q_qgauss = 0,0,0
+              cent_qgauss, sigma_qgauss = 0,0
+              c_qgauss_err, a_qgauss_err, q_qgauss_err = 0,0,0
+              cent_qgauss_err, sigma_qgauss_err = 0,0
+              pass
+            x,y = pna['pos'],pna['amp']
+            sum_y = y.sum()
+            dx = x[1] - x[0]
+            # c) statistical parameters
+            # -- weighted average
+            cent_stat  = (x*y).sum()/sum_y
+            sigma_stat = np.sqrt((y*(x-cent_stat)**2).sum()/sum_y)
+            # d) median
+            cent_median  = tb.median(x,y)
+            # assume normal distributed
+            # -> sigma = 1.4826*MAD (median absolute deviation)
+            mad = tb.mad(x,cent_median,y)
+            sigma_median = 1.4826*mad
+            # e) cumulative sum
+            cumsum_sigma_left = 0.5 - cumsum_1sigma/2
+            cumsum_sigma_right = 0.5 + cumsum_1sigma/2
+            cumsum_y = dx*y.cumsum()
+            cumsum_idx_50 = (np.abs(cumsum_y-0.5)).argmin()
+            cumsum_idx_sigma_32 = (np.abs(cumsum_y-
+            cumsum_sigma_left)).argmin()
+            cumsum_idx_sigma_68 = (np.abs(cumsum_y-
+            cumsum_sigma_right)).argmin()
+            cent_cumsum = x[cumsum_idx_50]
+            sigma_cumsum_32 = cent_cumsum-x[cumsum_idx_sigma_32]
+            sigma_cumsum_68 = x[cumsum_idx_sigma_68] - cent_cumsum
+            # f) peak of distribution
+            cent_peak = x[y.argmax()]
             # background estimate
-            bg_avg_left,bg_avg_right,bg_avg,
+            # average the first/last bgnavg bins
+            bg_avg_left = y[:self.bgnavg].mean()
+            bg_avg_right = y[-self.bgnavg:].mean()
+            bg_avg = (bg_avg_left+bg_avg_right)/2
+            # g) emittance
+            # if no beam is given
+            (emit_gauss,emit_qgauss,emit_stat,emit_median,
+            emit_cumsum_32,emit_cumsum_68) = (0,)*6
+            # if beam given convert picture sigma to beam sigma and then 
+            # to normalized emittance
+            if (beam is not None) and (beam.upper() in ['B1','B2']):
+              # get lsf,beta and energy with time stamp closest to
+              # time_stamp and smaller than time_stamp
+              bsrt_lsf = {}
+              for k in lsf_var[plane],beta_var[plane],energy_var:
+                idx = np.where(time_stamp-bsrt_lsf_db[k][0]>=0.)[0][-1] 
+                bsrt_lsf[k] = bsrt_lsf_db[k][1][idx]
+              # convert sigma to emittance
+              emit_norm = []
+              for sigma in [sigma_gauss,sigma_qgauss,sigma_stat,
+                sigma_median,sigma_cumsum_32,sigma_cumsum_68]:
+                # geometric emittance
+                emit_geom = ((sigma**2 - bsrt_lsf[lsf_var[plane]]**2)/
+                             bsrt_lsf[beta_var[plane]]) 
+                emit_norm.append(pytimber.toolbox.emitnorm(emit_geom,
+                                bsrt_lsf[energy_var],m0=938.272046))
+              [emit_gauss,emit_qgauss,emit_stat,emit_median,
+                            emit_cumsum_32,emit_cumsum_68] = emit_norm
             # estimate of halo
-            sum_bin_left,sum_bin_right,entropie
-            ))
+            # y) sum bins between x_min mm and x_max mm
+            #    sum bins between -x_min mm and -x_max mm (remember bump  
+            #      on right side of profile, so better do individual sums)
+            x_min,x_max = 3,6
+            mask_r = np.logical_and(pna['pos'] < x_max,
+                              pna['pos'] > x_min)
+            mask_l = np.logical_and(pna['pos'] < -x_min,
+                              pna['pos'] > -x_max)
+            sum_bin_left = pna['amp'][mask_l].sum() 
+            sum_bin_right = pna['amp'][mask_r].sum() 
+            # z) calculate the entropy and divide by the total entropy
+            #      entropie = -sum_(k=0)^(nbins) p_k ln(p_k)
+            #    where p_k is the bin height
+            #    Now normalize in addition to the maximum entropie = 
+            #    entropie for which all bins have the same height
+            #      entropie_max = -sum_(k=0)^(nbins) 1/nbins * ln(1/nbins)
+            #                   = -nbins*1/nbins*ln(1/nbins)
+            #                   = ln(nbins)
+            #    => entropie_norm = -(1/ln(nbins))*
+            #                               sum_(k=0)^(nbins) p_k ln(p_k)
+            #    For the case with removed background the bin amplitudes
+            #    can be negative, so this only works if the background is
+            #    not removed.
+            #    Even without background removal bins can be negative
+            #    -> take as quick fix the absolute value
+            if self._rm_bg is False:
+              nbins = len(pna['pos'])
+              entropie = -(1/np.log(nbins))*(pna['amp']*
+                             np.log(np.abs(pna['amp']))).sum()
+            else:
+              entropie = 0
+            data = (time_stamp,
+                # Gaussian fit
+                c_gauss, a_gauss, cent_gauss, sigma_gauss,
+                pcov_g, pcorr_g, xisq_g,
+                c_gauss_err, a_gauss_err, cent_gauss_err, sigma_gauss_err,
+                # q-Gaussian fit
+                c_qgauss, a_qgauss, q_qgauss, cent_qgauss, beta_qgauss,
+                sigma_qgauss,
+                pcov_qg, pcorr_qg, xisq_qg,
+                c_qgauss_err, a_qgauss_err, q_qgauss_err, cent_qgauss_err,
+                beta_qgauss_err, sigma_qgauss_err,
+                # statistical parameters
+                cent_stat, sigma_stat, cent_median, mad, sigma_median,
+                cent_cumsum, sigma_cumsum_32, sigma_cumsum_68,
+                cent_peak,
+                # normalized emittance
+                emit_gauss,emit_qgauss,emit_stat,emit_median,
+                emit_cumsum_32,emit_cumsum_68,
+                # background estimate
+                bg_avg_left,bg_avg_right,bg_avg,
+                # estimate of halo
+                sum_bin_left,sum_bin_right,entropie
+                )
+            if avgflag == 'avg': 
+              self.profiles_avg_stat[plane][slot].append(data)
+            if avgflag == 'mvavg': 
+              self.profiles_mvavg_stat[plane][slot].append(data)
     # convert to a structured array
     ftype=[('time_stamp',int),('c_gauss',float),('a_gauss',float),
            ('cent_gauss',float),('sigma_gauss',float),
@@ -1191,11 +1210,14 @@ class BSRTprofiles(object):
            ('entropie',float)
            ]
     for plane in ['h','v']:
-      for k in self.profiles_stat[plane].keys():
-        self.profiles_stat[plane][k] = np.array(
-          self.profiles_stat[plane][k], dtype=ftype)
+      for k in self.profiles_avg_stat[plane].keys():
+        self.profiles_avg_stat[plane][k] = np.array(
+          self.profiles_avg_stat[plane][k], dtype=ftype)
+        self.profiles_mvavg_stat[plane][k] = np.array(
+          self.profiles_mvavg_stat[plane][k], dtype=ftype)
     # variable for statistical variable names
-    self.profiles_stat_var = [ ftype[k][0] for k in xrange(len(ftype)) ]
+    self.profiles_avg_stat_var = [ ftype[k][0] for k in xrange(len(ftype)) ]
+    self.profiles_mvavg_stat_var = [ ftype[k][0] for k in xrange(len(ftype)) ]
     return self
   def get_slots(self):
     """
@@ -1308,16 +1330,26 @@ class BSRTprofiles(object):
       return self.profiles_norm_mvavg[plane][slot][mask][0]
     else:
       return self.profiles_norm_mvavg[plane][slot][mask]
-  def get_profile_stat(self, slot = None, time_stamp = None, plane = 'h'):
+  def get_profile_avg_stat(self, slot = None, time_stamp = None, plane = 'h'):
     """
     get profile data for slot *slot*, time stamp *time_stamp* as
     unix time [ns] and plane *plane*
     """
-    mask = self.profiles_stat[plane][slot]['time_stamp'] == time_stamp
+    mask = self.profiles_avg_stat[plane][slot]['time_stamp'] == time_stamp
     if len(np.where(mask==True)[0]) == 1:
-      return self.profiles_stat[plane][slot][mask][0]
+      return self.profiles_avg_stat[plane][slot][mask][0]
     else:
-      return self.profiles_stat[plane][slot][mask]
+      return self.profiles_avg_stat[plane][slot][mask]
+  def get_profile_mvavg_stat(self, slot = None, time_stamp = None, plane = 'h'):
+    """
+    get profile data for slot *slot*, time stamp *time_stamp* as
+    unix time [ns] and plane *plane*
+    """
+    mask = self.profiles_mvavg_stat[plane][slot]['time_stamp'] == time_stamp
+    if len(np.where(mask==True)[0]) == 1:
+      return self.profiles_mvavg_stat[plane][slot][mask][0]
+    else:
+      return self.profiles_mvavg_stat[plane][slot][mask]
   def _plot_profile(self, slot = None, time_stamp = None, plane = 'h',
                     norm = True, mvavg = False,
                     smooth = 0.025, verbose = False):
@@ -1364,8 +1396,12 @@ class BSRTprofiles(object):
       else:
         profs_avg = self.get_profile_norm_avg(slot=slot,
                           time_stamp=time_stamp,plane=plane)
-      if self.profiles_stat is not None:
-        stat_aux = self.get_profile_stat(slot=slot,
+      if self.profiles_avg_stat is not None:
+        if mvavg is True:
+          stat_aux = self.get_profile_mvavg_stat(slot=slot,
+                     time_stamp=time_stamp,plane=plane)
+        else:
+          stat_aux = self.get_profile_avg_stat(slot=slot,
                      time_stamp=time_stamp,plane=plane)
         # Gaussian fit
         c_gauss, a_gauss = stat_aux['c_gauss'], stat_aux['a_gauss']
@@ -1416,7 +1452,7 @@ class BSRTprofiles(object):
       # plot average over profiles
       pl.plot(profs_avg['pos'],profs_avg['amp'],
               label = 'average profile',color='k',linestyle='-')
-      if self.profiles_stat is not None:
+      if self.profiles_avg_stat is not None:
         # plot Gaussian fit
         pl.plot(profs_avg['pos'],tb.gauss_pdf(profs_avg['pos'],
                 c_gauss,a_gauss,cent_gauss,sigma_gauss),
@@ -1444,7 +1480,7 @@ class BSRTprofiles(object):
     self._plot_profile(slot=slot,time_stamp=time_stamp,plane=plane,
                        norm=False,verbose=verbose)
   def plot_profile_norm(self, slot = None, time_stamp = None,
-                        plane = 'h', verbose = False):
+                        mvavg=False,smooth=None,plane = 'h', verbose = False):
     """
     Plot all profiles for specific slot and time. Profiles are
     normalized to represent a probability distribution, explicitly:
@@ -1458,10 +1494,18 @@ class BSRTprofiles(object):
     slot : slot number
     time_stamp : time stamp in unix time
     plane : plane of profile, either 'h' or 'v'
+    mvavg : if mvavg = False plot average profile for each time stamp
+                       (self.profiles_norm_avg)
+            if mvavg = True plots moving average for each time stamp
+                       (self.profiles_norm_mvavg)
+    smooth: parameter to smooth (only!) average profiles with lowess.
+            smooth = 0 or smooth = None: no smoothing
+            smooth > 0: 'frac' parameter in lowess (Between 0 and 1.
+            The fraction of the data used when estimating each y-value.)
     verbose : verbose option for additional output
     """
     self._plot_profile(slot=slot,time_stamp=time_stamp,plane=plane,
-                       norm=True,verbose=verbose)
+                       norm=True,mvavg=mvavg,smooth=smooth,verbose=verbose)
   def plot_cumsum(self, slot = None, time_stamp = None, plane = 'h',
                   mvavg = False, verbose = False):
     """
@@ -1498,8 +1542,8 @@ class BSRTprofiles(object):
     else:
       profs_avg = self.get_profile_norm_avg(slot=slot,
                        time_stamp=time_stamp,plane=plane)
-    if self.profiles_stat is not None:
-      sta = self.get_profile_stat(slot=slot,
+    if self.profiles_avg_stat is not None:
+      sta = self.get_profile_avg_stat(slot=slot,
                    time_stamp=time_stamp,plane=plane)
     # flag if profile plot failed
     check_plot = True
@@ -1523,7 +1567,7 @@ class BSRTprofiles(object):
       dx = profs[i]['pos'][1]-profs[i]['pos'][0]
       pl.plot(profs_avg['pos'],(dx*profs_avg['amp']).cumsum(),
             label = 'average profile',color='k',linestyle='-')
-      if self.profiles_stat is not None:
+      if self.profiles_avg_stat is not None:
         pl.plot(profs_avg['pos'],(dx*tb.gauss_pdf(profs_avg['pos'],
                 sta['c_gauss'],sta['a_gauss'],sta['cent_gauss'],
                 sta['sigma_gauss'])).cumsum(),
@@ -1664,8 +1708,12 @@ class BSRTprofiles(object):
           res = amp_avg - amp_ref
           pl.fill_between(profs_avg['pos'][mask],res-sig,res+sig,
                   alpha=0.2,color='k')
-        if self.profiles_stat is not None:
-          sta = self.get_profile_stat(slot=slot,
+        if self.profiles_avg_stat is not None:
+          if mvavg is True:
+            sta = self.get_profile_mvavg_stat(slot=slot,
+                       time_stamp=time_stamp,plane=plane)
+          else:
+            sta = self.get_profile_avg_stat(slot=slot,
                        time_stamp=time_stamp,plane=plane)
           # Gaussian fit
           c_gauss, a_gauss = sta['c_gauss'], sta['a_gauss']
@@ -1786,7 +1834,7 @@ class BSRTprofiles(object):
     # flaux = flag for checking if profile plots have failed
     flaux = self._plot_profile(slot=slot,time_stamp=time_stamp,
                               plane=plane,norm=norm,smooth=smooth,
-                              verbose=verbose)
+                              mvavg=mvavg,verbose=verbose)
     if norm:
       pl.gca().set_ylabel('probability [a.u.]')
     if log:
@@ -1803,7 +1851,7 @@ class BSRTprofiles(object):
            time_stamp_ref=time_stamp_ref, plane=plane, mvavg = mvavg,
            errbar=errbar, smooth=smooth,
            verbose=verbose)
-    pl.gca().set_ylim(-0.07,0.07)
+    pl.gca().set_ylim(-0.05,0.05)
 #     4) ratio
     pl.subplot(222)
     self._plot_residual_ratio(flag='ratio', flagprof='avg', 
@@ -1811,7 +1859,7 @@ class BSRTprofiles(object):
            time_stamp_ref=time_stamp_ref, plane=plane, mvavg=mvavg, 
            errbar=errbar, smooth=smooth,
            verbose=verbose)
-    pl.gca().set_ylim(-1,6)
+    pl.gca().set_ylim(-1,5)
     # remove subplot titles, shring legend size and put it on top of
     # the subplot
     for i in xrange(4):
