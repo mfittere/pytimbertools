@@ -82,6 +82,8 @@ def gauss_cdf(x,mu,sig):
 def movingaverage(data,navg):
   """calculates the moving average over
   *navg* data points"""
+  if navg is None:
+    navg = 1 
   weights = np.repeat(1.0, navg)/navg
   dataavg = np.convolve(data, weights, 'valid')
   return dataavg
