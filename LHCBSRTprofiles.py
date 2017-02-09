@@ -934,6 +934,9 @@ class BSRTprofiles(object):
             # a compensate for c0 so that the integral over the
             # the distribution is equal to 1. If c is small, a should be
             # close to 1
+            # -- fit is done without errors for profs_norm_avg 
+            #    as the std over this few measurements (e.g. 3) 
+            #    is to noisy.
             # -- limits for c,a:
             #    background is usually around 0.008 
             #        -> limit c to [-0.1,0.1]
@@ -950,8 +953,15 @@ class BSRTprofiles(object):
                 cmin,cmax = [0,0.1]
               else:
                 cmin,cmax = [-0.1,0.1]
-              p,pcov_g = curve_fit(tb.gauss_pdf,pna['pos'],
-                                 pna['amp'],p0=[0,1,0,2],
+              if avgflag == 'avg':
+                p,pcov_g = curve_fit(f=tb.gauss_pdf,xdata=pna['pos'],
+                                 ydata=pna['amp'],p0=[0,1,0,2],
+                                 bounds=([cmin,0,-8,0],
+                                         [cmax,2,8,16]))
+              if avgflag == 'mvavg':
+                p,pcov_g = curve_fit(f=tb.gauss_pdf,xdata=pna['pos'],
+                                 ydata=pna['amp'],p0=[0,1,0,2],
+                                 sigma=pna['ampstd'],
                                  bounds=([cmin,0,-8,0],
                                          [cmax,2,8,16]))
               profs_norm_gauss = tb.gauss_pdf(pna['pos'],*p)
@@ -988,6 +998,9 @@ class BSRTprofiles(object):
             #    parameters
             # fit function =
             #   c+a*sqrt(beta)/cq*eq(-beta*(x-mu)**2)
+            # -- fit is done without errors for profs_norm_avg 
+            #    as the std over this few measurements (e.g. 3) 
+            #    is to noisy.
             # -- cq is also an estimate for the background
             #    a compensate for c0 so that the integral over the
             #    the distribution is equal to 1. If c0 is small, a should be
@@ -1008,8 +1021,15 @@ class BSRTprofiles(object):
                 cmin,cmax = [0,0.1]
               else:
                 cmin,cmax = [-0.1,0.1]
-              p,pcov_qg = curve_fit(tb.qgauss_pdf,pna['pos'],
-                                 pna['amp'],
+              if avgflag == 'avg':
+                p,pcov_qg = curve_fit(f=tb.qgauss_pdf,xdata=pna['pos'],
+                                 ydata=pna['amp'],
+                                 bounds=([cmin,0,1,-8,0],
+                                   [cmax,2,3,8,np.inf]))
+              if avgflag == 'mvavg':
+                p,pcov_qg = curve_fit(f=tb.qgauss_pdf,xdata=pna['pos'],
+                                 ydata=pna['amp'],
+                                 sigma=pna['ampstd'],
                                  bounds=([cmin,0,1,-8,0],
                                    [cmax,2,3,8,np.inf]))
               profs_norm_qgauss = tb.qgauss_pdf(pna['pos'],*p)
@@ -1768,7 +1788,7 @@ class BSRTprofiles(object):
     return check_plot
   def plot_all(self,slot = None, time_stamp = None, slot_ref = None,
                time_stamp_ref = None, plane = 'h', norm = True, 
-               mvavg = False, errbar = False, smooth = 0.025, log = True,
+               mvavg = False, errbar = False, smooth = None, log = True,
                verbose = False):
     """
     plot normalized or raw data profiles, cumulative distribution 
@@ -1796,6 +1816,7 @@ class BSRTprofiles(object):
             smooth = 0 or smooth = None: no smoothing
             smooth > 0: 'frac' parameter in lowess (Between 0 and 1.
             The fraction of the data used when estimating each y-value.)
+            A good choice for smooth is 0.025.
     errbar : if errbar = True show error bars for residual
              if errbar = False do not show error bars for residual
     log: plot profile in log scale
@@ -1811,10 +1832,6 @@ class BSRTprofiles(object):
             'errbar = True!')
       return
     pl.clf()
-    fig = pl.gcf()
-    nsub = 4 # number of subplots
-    for i in xrange(nsub):
-      fig.add_subplot(2,2,i+1)
     if time_stamp is not None:
       ts = ld.dumpdate(t=time_stamp*1.e-9,
                        fmt='%Y-%m-%d %H:%M:%S',zone='cern')
@@ -1869,8 +1886,8 @@ class BSRTprofiles(object):
                     ncol=2, mode="expand", borderaxespad=0.,
                     fontsize=10)
       pl.gca().set_xlim(-8,8)
-    fig.subplots_adjust(top=0.30)
-    fig.tight_layout()
+    pl.subplots_adjust(hspace=9)
+    pl.tight_layout()
     return flaux
   def mk_profile_video(self, slots = None, t1=None, t2=None,
                        slot_ref=None, norm = True, 
@@ -1927,7 +1944,6 @@ class BSRTprofiles(object):
       check_plot[plane] = {}
       slots = self._set_slots(plane=plane,slots=slots)
       # generate the figure and subplot
-      pl.figure(plane)
       for slot in slots:
         if os.path.exists(tmpdir) == False:
           os.makedirs(tmpdir)
@@ -1967,6 +1983,7 @@ class BSRTprofiles(object):
           print( '... total number of profiles %s'%(len(time_stamps)))
         # generate png of profiles for each timestamps
         for time_stamp in time_stamps:
+          pl.close('all')
           # find closest time stamp for reference bunch
           if slot_ref is not None:
             idx = np.argmin(np.abs(time_stamp-time_stamps_ref))
@@ -1994,8 +2011,6 @@ class BSRTprofiles(object):
         # delete png files already
         if (export is False) and (os.path.exists(tmpdir) is True):
           shutil.rmtree(tmpdir)
-        pl.figure(plane)
-        pl.close()
     # print a warning for all failed plots
     for plane in check_plot.keys():
       for slot in check_plot[plane].keys():
