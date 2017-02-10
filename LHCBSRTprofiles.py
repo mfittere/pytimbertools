@@ -875,7 +875,7 @@ class BSRTprofiles(object):
       elif force is True:
         print('... delete old data and recalculate statistical ' + 
             'parameters')
-    for plane in ['h','v']:
+    for plane in ['v','h']:
       if verbose:
         print('... start plane %s'%plane.upper())
       for slot in self._set_slots(plane=plane,slots=slots):
@@ -1024,14 +1024,20 @@ class BSRTprofiles(object):
               if avgflag == 'avg':
                 p,pcov_qg = curve_fit(f=tb.qgauss_pdf,xdata=pna['pos'],
                                  ydata=pna['amp'],
-                                 bounds=([cmin,0,1,-8,0],
-                                   [cmax,2,3,8,np.inf]))
+#                                 bounds=([cmin,0,1,-8,0],
+#                                   [cmax,2,3,8,np.inf]))
+                                 p0=[0,1,1,0,0.3],
+                                 bounds=([cmin,0,1.e-2,-6,1.e-2],
+                                   [cmax,2,5/3.,6,4.0]))
               if avgflag == 'mvavg':
                 p,pcov_qg = curve_fit(f=tb.qgauss_pdf,xdata=pna['pos'],
                                  ydata=pna['amp'],
                                  sigma=pna['ampstd'],
-                                 bounds=([cmin,0,1,-8,0],
-                                   [cmax,2,3,8,np.inf]))
+#                                 bounds=([cmin,0,1,-8,0],
+#                                   [cmax,2,3,8,np.inf]))
+                                 p0=[0,1,1,0,0.3],
+                                 bounds=([cmin,0,1.e-2,-6,1.e-2],
+                                   [cmax,2,5/3.,6,1.0]))
               profs_norm_qgauss = tb.qgauss_pdf(pna['pos'],*p)
               # h) calculate xi-squared
               # - estimate noise by the standard deviation in each bin
@@ -1059,7 +1065,7 @@ class BSRTprofiles(object):
               # sigma**2 = 1/(beta*(5-3q)) for q < 5/3
               # sigma**2 = infty for 5/3 <= q < 2
               # undefined for 2<= q < 3
-              if (q_qgauss > 1) & (q_qgauss < 5/3.):
+              if (q_qgauss < 5/3.):
                 sigma_qgauss = np.sqrt( 1/(beta_qgauss*(5-3*q_qgauss)) )
                 # sigma_f**2 = 
                 #   |df/da|**2*sigma_a**2+|df/db|**2*sigma_b**2

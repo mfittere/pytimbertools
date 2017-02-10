@@ -24,7 +24,6 @@ def gauss_pdf(x,c,a,mu,sig):
   # and y = (x - loc) / scale
   # -> loc = mu, scale = sig
   # gauss_fit(x,mu,sig) = norm.pdf(x,mu,sig)/sig
-#  return c+a*norm.pdf(x,mu,sig)/sig
   return c+a*norm.pdf(x,mu,sig)
 
 def qgauss_pdf(x,c,a,q,mu,beta):
@@ -54,12 +53,26 @@ def qgauss_pdf(x,c,a,q,mu,beta):
   beta : beta of q-Gaussian distribution
   q : q of a q-Gaussian
   """
-  if 1 < q and q < 3:
-    c_q = ( ( np.sqrt(np.pi)*gamma((3-q)/(2*(q-1))) ) / 
-            (np.sqrt(q-1)*gamma(1/(q-1))) )
-    return c+a*(np.sqrt(beta)/c_q)*( (1+beta*(q-1)*(x-mu)**2)**(1/(1-q)) )
+  if 0 < q < 3:
+    if 1.01 < q and q < 3:
+      c_q = ( ( np.sqrt(np.pi)*gamma((3-q)/(2*(q-1))) ) / 
+              (np.sqrt(q-1)*gamma(1/(q-1))) )
+#      print(c,a,q,mu,beta)
+      y=c+a*(np.sqrt(beta)/c_q)*( (1-beta*(1-q)*(x-mu)**2)**(1/(1-q)) )
+    elif 0 < q < 0.99:
+      c_q = ( ( 2*np.sqrt(np.pi)*gamma(1/(1-q)) ) / 
+              ( (3-q)*np.sqrt(1-q)*gamma((3-q)/(2*(1-q))) ) )
+#      print(c,a,q,mu,beta)
+      y=c+a*(np.sqrt(beta)/c_q)*( (1-beta*(1-q)*(x-mu)**2)**(1/(1-q)) )
+    elif q >= 0.99 and q <= 1.01:
+#      print(c,a,q,mu,beta)
+      y=gauss_pdf(x,c,a,mu,np.sqrt(1/(beta*(5-3*q))))
+#    if np.isnan(y).any() or np.isinf(y).any():
+#      print y[0:10]
+    return np.nan_to_num(y)
   else:
-    raise ValueError('qgauss_pdf only defined for 1 < q < 3')
+    print(c,a,q,mu,beta)
+    raise ValueError('qgauss_pdf only defined for 0 < q < 3')
 
 def gauss_cdf(x,mu,sig):
   """
