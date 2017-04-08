@@ -45,13 +45,14 @@ class BSRTprofiles(object):
   --------
   Load profiles from list of files (see BSRTprofiles.load_files for 
   details):
-    BSRTprofiles.load_files(files='/myprofiledir/*.bindata')
+    BSRTprofiles.load_files(files='*.bindata')
   Load profiles from list (load_files), discard noisy profiles 
   (clean_data), calculate statistical parameters (stats):
-    (BSRTprofiles.load_files(files='/myprofiledir/*.bindata')
-      .clean_data().stats()
+    BSRTprofiles.load_files(files='*.bindata').clean_data().stats()
   Attributes:
   -----------
+  beam: either 'B1' or 'B2'
+  db: pytimber data base to get lsf factor, beta etc.
   records : dictionary containing binary file information with the 
       format:
         {binary_file_name : [record_1,...,record_n]}
@@ -132,10 +133,13 @@ class BSRTprofiles(object):
   def read_array_double(r, sz):
     return np.array(r.read_double(sz)[:sz])
 
-  def __init__(self, records=None, profiles=None, profiles_norm=None,
+  def __init__(self, beam=None,db=None,
+               records=None, profiles=None, profiles_norm=None,
                profiles_norm_avg=None, profiles_norm_mvavg=None, 
                profiles_avg_stat=None, profiles_mvavg_stat=None,
                bgnavg = None, nmvavg = None):
+    self.beam = beam
+    self.db = db
     self.records   = records
     if self.records is None:
       self.filenames = None
@@ -706,37 +710,23 @@ class BSRTprofiles(object):
     elif not hasattr(slots,"__iter__"):
       slots = [slots]
     return np.sort(slots,axis=None)
-  def get_beta_lsf_variable_names(self,beam,db):
+  def get_beta_lsf_variable_names(self):
     """
     get variables names in logging database for lsf correction factor,
     beta function at BSRT location and beam energy.
-
-    Parameters:                                                         
-    -----------                                                         
-    beam: LHC beam, either 'B1' or 'B2'                                 
-    db: database to extract data. Can be either directly from the 
-        logging database or from the pagestore database
-        (see self.get_beta_lsf_energy)      
     """
+    db   = self.db
+    beam = self.beam
     [lsf_h_var, lsf_v_var]   = db.search('%LHC%BSRT%'+beam.upper()      
                                          +'%LSF_%')                     
     [beta_h_var, beta_v_var] = db.search('%LHC%BSRT%'+beam.upper()      
                                          +'%BETA%')                     
     energy_var = u'LHC.STATS:ENERGY'                                    
     return lsf_h_var,lsf_v_var,beta_h_var,beta_v_var,energy_var
-  def get_beta_lsf_energy(self,beam,db=None):
+  def get_beta_lsf_energy(self):
     """
     get energy, lsf correction factor and beta function at BSRT for
     profiles using pytimber
-
-    Parameters:
-    -----------
-    beam: LHC beam, either 'B1' or 'B2'
-    db: database to extract data. Can be either directly from the
-        logging database (default if not database is given):
-          db = pytimber.LoggingDB()
-        or a local one from pagestore:
-          db=pagestore.PageStore(dbfile,datadir,readonly=True)
     
     Returns:
     --------
@@ -747,6 +737,8 @@ class BSRTprofiles(object):
     values. All timestamps are in [ns] (note that logging database is
     in [s]!)
     """
+    db   = self.db
+    beam = self.beam
     if db is None:
       try:
         db = pytimber.LoggingDB()
@@ -759,7 +751,7 @@ class BSRTprofiles(object):
     (t1,t2) = self._get_range_timestamps()
     # convert [ns] -> [s]
     (t1,t2) = (t1*1.e-9,t2*1.e-9)
-    bsrt_lsf_var = self.get_beta_lsf_variable_names(beam=beam,db=db)
+    bsrt_lsf_var = self.get_beta_lsf_variable_names()
     lsf_h_var,lsf_v_var,beta_h_var,beta_v_var,energy_var = bsrt_lsf_var
     t1_lsf = t1
     bsrt_lsf = db.get(bsrt_lsf_var, t1_lsf, t2)
@@ -782,6 +774,31 @@ class BSRTprofiles(object):
           bsrt_lsf[k] = list(bsrt_lsf[k])
           bsrt_lsf[k][0] = bsrt_lsf[k][0]*1.e9
     return bsrt_lsf
+  def sigma_prof_to_sigma_beam(self,sigma_prof,plane,time_stamp):
+    """
+    convert profile sigma to beam sigma
+      sigma_beam = sqrt(sigma_prof**2-lsf**2)
+
+    Parameter:
+    ----------
+    sigma_prof: profile sigma [mm]
+    plane: 'h' or 'v'
+    time_stamp: time stamp
+
+    Returns:
+    --------
+    sigma_beam: beam sigma [mm]
+    """
+    # get variable names
+    bsrt_lsf_var = self.get_beta_lsf_variable_names()
+    lsf_var={};beta_var={}
+    (lsf_var['h'],lsf_var['v'],beta_var['h'],beta_var['v'],
+         energy_var) = bsrt_lsf_var
+    # extract the data
+    bsrt_lsf_db = self.get_beta_lsf_energy()
+    idx = np.where(time_stamp-bsrt_lsf_db[lsf_var[plane]][0]>=0.)[0][-1]
+    lsf = bsrt_lsf_db[lsf_var[plane]][1][idx]
+    return np.sqrt(sigma_prof**2-lsf**2)
       
   def get_stats(self,beam=None,db=None,slots=None,force=False,
                 verbose=False,bgnavg = 10):
@@ -814,11 +831,8 @@ class BSRTprofiles(object):
     self : BSRTprofiles class object with recalculated 
            self.profiles_avg_stat
 
-    describe all statistical parameters
-    cor_fac: correction factor to convert profile sigma to beam
-         emittance.
-         cor_fac = None: do not convert
-         cor_fac = (energy,betah,betav,lsfh,lsfv):
+    Conversion from beam sigma to emittance (only valid for Gaussian
+    distributions):
              *energy* = beam energy
              *beta*   = beta function at BSRT
              *lsf*    = correction factor for system optical resolution
@@ -827,18 +841,30 @@ class BSRTprofiles(object):
                 sigma_beam = sqrt((sigma_bsrt)**2-(lsf)**2)
                 eps_beam = sigma_beam**2/beta/(beta_rel*gamma_rel)
     """
-    if self.bgnavg is not None and verbose:
-      print('... setting bgnavg to %s '%bgnavg +
-            'from previously %s'%self.bgnavg)
-    self.bgnavg = bgnavg
-    # check of input parameters
+    # check of input parameters (make that better)
     if beam is None:
       if verbose:
         print("WARNING: no conversion of sigma to beam emittance!" +
               "Specify the parameter 'beam' and the database 'db'" + 
               "to be used for data extraction.")
-    elif beam.upper() != 'B1' and beam.upper() != 'B2':
+    elif beam.upper() == 'B1' or beam.upper() == 'B2':
+      self.beam = beam.upper()
+    else:
       raise ValueError('beam must be either None, b1 or b2!')
+    if db is None:
+      try:
+        self.db = pytimber.LoggingDB()
+      except NameError:
+        print('ERROR: Trying to use db = pytimber.LoggingDB(), but ' +
+              'pytimber is not imported! You can use ' +
+              'pagestore database instead for offline analysis!')
+        return
+    else:
+      self.db = db
+    if self.bgnavg is not None and verbose:
+      print('... setting bgnavg to %s '%bgnavg +
+            'from previously %s'%self.bgnavg)
+    self.bgnavg = bgnavg
     # constants for cumulative distribution later
     # - mean = 50 % of cumulative distribution
     # - in n sigma of the distribution erf(n/sqrt(2)) per cent are 
@@ -860,15 +886,14 @@ class BSRTprofiles(object):
       self.profiles_mvavg_stat['v']={}
     # get lsf factor, beta@BSRT and energy from logging databse
     # get lsf correction factor, beta function and beam energy
-    if (beam is not None) and (beam.upper() in ['B1','B2']):
+    if ((self.beam) is not None) and ((self.beam).upper() in ['B1','B2']):
       # variable names
-      bsrt_lsf_var = self.get_beta_lsf_variable_names(beam=beam,
-                                                        db=db)
+      bsrt_lsf_var = self.get_beta_lsf_variable_names()
       lsf_var={};beta_var={}
       (lsf_var['h'],lsf_var['v'],beta_var['h'],beta_var['v'],
            energy_var) = bsrt_lsf_var
       # data from database
-      bsrt_lsf_db = self.get_beta_lsf_energy(beam=beam,db=db)
+      bsrt_lsf_db = self.get_beta_lsf_energy()
     if verbose:
       if force is False:
         print('... calculate statistical parameters.')
@@ -1657,6 +1682,13 @@ class BSRTprofiles(object):
       slot_ref = slot
     if time_stamp_ref is None:
       time_stamp_ref = self.get_timestamps(slot=slot_ref,plane=plane)[0]
+    # check that timestamps are correct
+    if time_stamp not in self.get_timestamps(slot=slot,plane=plane):
+      print('ERROR: timestamp %s for slot %s not found!'%(time_stamp,slot))
+      return
+    if time_stamp_ref not in self.get_timestamps(slot=slot_ref,plane=plane):
+      print('ERROR: timestamp %s for slot %s not found!'%(time_stamp_ref,slot_ref))
+      return
     if smooth is None:
       smooth = 0
     # select profile for slot and time stamp
@@ -1793,7 +1825,7 @@ class BSRTprofiles(object):
                                plane.upper(),ts))
     return check_plot
   def plot_all(self,slot = None, time_stamp = None, slot_ref = None,
-               time_stamp_ref = None, plane = 'h', norm = True, 
+               time_stamp_ref = None, xaxis = 'mm', plane = 'h', norm = True, 
                mvavg = False, errbar = False, smooth = None, log = True,
                verbose = False):
     """
@@ -1807,6 +1839,11 @@ class BSRTprofiles(object):
     slot_ref : reference slot, if None the same slot is used
     time_stamp_ref : time stamp in unix time [ns] of reference slot,
                      if None first time stamp is used
+    xaxis: if mm = leave xaxis in mm as for raw profiles
+           if sigma = normalize to sigma calculated with Gaussian fit
+                      (due to LSF conversion only Gaussian fit should be
+                      used for absolute emittance and beam sigma 
+                      calculation)
     plane : plane of profile, either 'h' or 'v'
     norm : if norm = False raw profiles are plotted
            if norm = True profiles are normalized to represent a 
@@ -1891,13 +1928,38 @@ class BSRTprofiles(object):
       pl.gca().legend(bbox_to_anchor=(0., 1.02, 1., .102), loc=3,
                     ncol=2, mode="expand", borderaxespad=0.,
                     fontsize=10)
-      pl.gca().set_xlim(-8,8)
+      # rescale the xaxis to beam sigma where the value
+      # of the reference bunch is used
+      if xaxis == 'sigma' and self.profiles_avg_stat is not None:
+        if mvavg is True:
+          stat_aux = self.get_profile_mvavg_stat(slot=slot_ref,
+                     time_stamp=time_stamp_ref,plane=plane)
+        else:
+          stat_aux = self.get_profile_avg_stat(slot=slot_ref,
+                     time_stamp=time_stamp_ref,plane=plane)
+        sigma_gauss = stat_aux['sigma_gauss']
+        sigma_beam  = self.sigma_prof_to_sigma_beam(sigma_prof=sigma_gauss,
+                         plane=plane,time_stamp=time_stamp_ref)
+        # now rescale the xaxis
+        pl.gca().set_xlim(-8,8)
+        ax = pl.gca()
+        xticks_mm = ax.get_xticks()
+        xticks_labels = [str(x) for x in xticks_mm ]
+        xticks_beam = xticks_mm*sigma_gauss/sigma_beam
+        ax.set_xticks(xticks_beam)
+        ax.set_xticklabels(xticks_labels)
+        pl.gca().set_xlabel(r'position [$\sigma_{\rm{Beam}}$], $\sigma_{\rm{Beam}}$ = %2.2f mm'%sigma_beam)
+      #otherwise leave unchanged
+      else:
+        pl.gca().set_xlim(-8,8)
+        pl.gca().set_xlabel('position [mm]')
     pl.subplots_adjust(hspace=9)
     pl.tight_layout()
     return flaux
   def mk_profile_video(self, slots = None, t1=None, t2=None,
                        slot_ref=None, norm = True, 
                        mvavg = True, errbar = True, smooth=None,
+                       xaxis='mm',
                        plt_dir='BSRTprofile_gifs', delay=20, 
                        export=False,verbose=False):
     """
@@ -1937,6 +1999,11 @@ class BSRTprofiles(object):
             smooth > 0: 'frac' parameter in lowess (Between 0 and 1.
             The fraction of the data used when estimating each y-value.)
             Good values are achieved for smooth =0.025
+    xaxis: if mm = leave xaxis in mm as for raw profiles
+           if sigma = normalize to sigma calculated with Gaussian fit
+                      (due to LSF conversion only Gaussian fit should be
+                      used for absolute emittance and beam sigma 
+                      calculation)
     plt_dir : directory to save videos
     delay : option for convert to define delay between pictures
     export : If True do not delete png files
@@ -1998,7 +2065,7 @@ class BSRTprofiles(object):
           flaux = self.plot_all(slot=slot,time_stamp=time_stamp,
                       slot_ref=slot_ref,time_stamp_ref=time_stamp_ref,
                       plane=plane,norm=norm,mvavg=mvavg,errbar=errbar,
-                      smooth=smooth)
+                      smooth=smooth,xaxis=xaxis)
           # if plot failed, flaux = False -> append t check_plot
           if flaux is False: check_plot[plane][slot].append(time_stamp)
           fnpl = os.path.join(tmpdir,'slot_%s_plane_%s_%05d.png'%(slot,
