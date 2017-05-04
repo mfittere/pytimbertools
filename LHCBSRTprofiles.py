@@ -2096,3 +2096,201 @@ class BSRTprofiles(object):
     # delete temporary directory
     if (export is False) and (os.path.exists(tmpdir) is True):
       shutil.rmtree(tmpdir)
+  def plot_all_ipac17(self,slot = None, time_stamp = None, 
+               time_stamp_ref = None, xaxis = 'sigma', plane = 'h',
+               verbose = False):
+    """
+    simplified version of plot_all for IPAC. Takes as reference bunch
+    the same bunch.
+    Assumes the following plot options in plot_all:
+      norm = True, smooth = 0, mvavg = True, errbar = True,
+      log = True
+
+    Parameters:
+    -----------
+    slot : slot number
+    time_stamp : time stamp in unix time [ns], if None take last time stamp
+    time_stamp_ref : time stamp in unix time [ns] of reference slot,
+                     if None first time stamp is used
+    xaxis: if mm = leave xaxis in mm as for raw profiles
+           if sigma = normalize to sigma calculated with Gaussian fit
+                      (due to LSF conversion only Gaussian fit should be
+                      used for absolute emittance and beam sigma 
+                      calculation)
+    plane : plane of profile, either 'h' or 'v'
+    verbose : verbose option for additional output
+    
+    Returns:
+    --------
+    flaux : bool, flag to check if profile plots have failed
+    """
+    # hardcode plot options
+    norm = True; smooth = 0; mvavg = True; errbar = True; log=True;
+    # set default values
+    if slot is None:
+      slot = self.get_slots()[0]
+      if verbose: print("Using first slot %s"%slot)
+    time_stamp_all = self.get_timestamps(slot=slot,plane=plane)
+    if time_stamp is None:
+      time_stamp = time_stamp_all[-1]
+    if time_stamp_ref is None:
+      time_stamp_ref = time_stamp_all[0]
+    ts = ld.dumpdate(t=time_stamp*1.e-9,
+                     fmt='%H:%M:%S',zone='cern')
+    ts_ref = ld.dumpdate(t=time_stamp_ref*1.e-9,
+                           fmt='%H:%M:%S',zone='cern')
+    # adjust figure size
+    num=pl.gcf().number
+    pl.clf()
+    f,(ax1,ax2) = pl.subplots(2,1, sharex=True,num=num)
+    f.set_size_inches(5, 6, forward=True)
+    pl.suptitle(r'%s plane, slot %s, $t$=%s, '%(plane.upper(),slot,ts) +
+                r'$t_{\rm ref}$ = %s'%(ts_ref),fontsize=14)
+    # rescale position if xaxis=='sigma'
+    if xaxis == 'sigma' and self.profiles_avg_stat is not None:
+      stat_aux = self.get_profile_mvavg_stat(slot=slot,
+                 time_stamp=time_stamp_ref,plane=plane)
+      sigma_gauss = stat_aux['sigma_gauss']
+      sigma_beam  = self.sigma_prof_to_sigma_beam(sigma_prof=sigma_gauss,
+                       plane=plane,time_stamp=time_stamp_ref)
+      xscale = sigma_beam/sigma_gauss 
+    else:
+      xscale = 1
+    # 1) plot moving average profile + Gaussian fit
+    # profile
+    prof = self.get_profile_norm_mvavg(slot=slot,
+             time_stamp = time_stamp, plane = plane)
+    ax1.plot(prof['pos']*xscale,prof['amp'],'k-',label='profile')
+    ax1.fill_between(x=prof['pos']*xscale,y1=prof['amp']-prof['amperr'],
+                    y2=prof['amp']+prof['amperr'],color='k',alpha=0.3)
+    # Gaussian fit
+    stat_aux = self.get_profile_mvavg_stat(slot=slot,
+                 time_stamp=time_stamp,plane=plane)
+    c_gauss, a_gauss = stat_aux['c_gauss'], stat_aux['a_gauss']
+    cent_gauss = stat_aux['cent_gauss']
+    sigma_gauss    = stat_aux['sigma_gauss']
+    ax1.plot(prof['pos']*xscale,tb.gauss_pdf(prof['pos'],
+             c_gauss,a_gauss,cent_gauss,sigma_gauss),
+             color='r',linewidth=1,label='Gaussian fit')
+    ax1.set_ylim(1.e-3,0.7)
+    ax1.grid(b=True)
+    ax1.set_ylabel(r'probability $A$ [a.u.]',fontsize=14)
+    ax1.set_yscale('log')
+    ax1.set_title('')
+    ax1.legend(bbox_to_anchor=(0., 1.02, 1., .102), loc=3,
+                  ncol=2, mode="expand", borderaxespad=0.,
+                  fontsize=14)
+    # 2) residual, only average profile
+    # get overlapping positions
+    prof_ref = self.get_profile_norm_mvavg(slot=slot,
+                   time_stamp = time_stamp_ref, plane = plane)
+    xval = list(set(prof['pos']) and set(prof_ref['pos']))
+    mask     = np.array([ pos in xval for pos in prof['pos'] ],
+                        dtype=bool)
+    mask_ref = np.array([ pos in xval for pos in prof_ref['pos'] ],
+                        dtype=bool)
+    pos = prof['pos'][mask]*xscale
+    yscale = 1.e-2
+    res = 1.e2*(prof['amp'][mask]-prof_ref['amp'][mask])
+    sig = 1.e2*(np.sqrt(prof['amperr'][mask]**2+prof_ref['amperr'][mask]**2)) 
+    ax2.plot(pos,res,'k-')
+    ax2.fill_between(x=pos,y1=res-sig,y2=res+sig,color='k',alpha=0.3)
+    ax2.set_ylim(-5,5)
+    ax2.grid(b=True)
+    ax2.set_ylabel(r'residual $A-A_{\mathrm{ref}}$ [$10^{-2}$]',fontsize=14)
+    if xaxis == 'sigma' and xscale != 1:
+      # now rescale the xaxis
+      for ax in ax1,ax2:
+        ax.set_xlim(-7,7)
+        ax.yaxis.set_tick_params(labelsize=14)
+      lbl=(r'position [$\sigma_{\rm{Beam}}$], '+
+            r'$\sigma_{\rm{Beam}}$ = %2.2f mm'%sigma_beam)
+      ax2.set_xlabel(lbl,fontsize=14)
+      ax2.xaxis.set_tick_params(labelsize=14)
+      #otherwise leave unchanged
+    else:
+      for ax in ax1,ax2:
+        ax.set_xlim(-8,8)
+      ax2.set_xlabel('position [mm]',fontsize=14)
+    pl.gcf().subplots_adjust(left=0.18,top=0.87,hspace=0.05)
+  def mk_profile_video_ipac17(self, slots = None, t1=None, t2=None,
+                       xaxis='mm',
+                       plt_dir='BSRTprofile_gifs', delay=20, 
+                       export=False,verbose=False):
+    """
+    Generates a video of the profiles of slot with *slot* using 
+    plot_all_ipac17
+
+    Parameters:
+    -----------
+    slot : slot or list of slots of slots. If slot = None all slots
+           are selected. In case of several slot, on video is 
+           generated per slot
+    t1 : start time in unix time [ns], if None first time stamp for
+         slot is used
+    t2 : end time in unix time [ns], if None last time stamp for slot
+         is used
+    xaxis: if mm = leave xaxis in mm as for raw profiles
+           if sigma = normalize to sigma calculated with Gaussian fit
+                      (due to LSF conversion only Gaussian fit should be
+                      used for absolute emittance and beam sigma 
+                      calculation)
+    plt_dir : directory to save videos
+    delay : option for convert to define delay between pictures
+    export : If True do not delete png files
+    verbose : verbose option for additional output
+    """
+    tmpdir = os.path.join(plt_dir,'tmp_bsrtprofiles')
+    # dictionary to store failed profiles
+    check_plot = {}
+    for plane in ['h','v']:
+      # set slot and plane, initialize variables
+      check_plot[plane] = {}
+      slots = self._set_slots(plane=plane,slots=slots)
+      # generate the figure and subplot
+      for slot in slots:
+        if os.path.exists(tmpdir) == False:
+          os.makedirs(tmpdir)
+        check_plot[plane][slot] = []
+        if verbose:
+          print('... generating plots for slot %s'%slot)
+        time_stamps = self.get_timestamps(slot=slot,plane=plane)
+        if t1 is None:
+          t1 = time_stamps[0]
+        if t2 is None:
+          t2 = time_stamps[-1]
+        time_stamps = time_stamps[(time_stamps >= t1) & 
+                                  (time_stamps <= t2)]
+        if (len(time_stamps) == 0):                                                 
+          print('WARNING: no time stamps found for slot %s, '%slot +
+                'plane %s and (t1,t2)=(%s,%s)'%(plane,t1,t2))
+          continue       
+        pngcount = 0
+        if verbose: 
+          print( '... total number of profiles %s'%(len(time_stamps)))
+        # generate png of profiles for each timestamps
+        for time_stamp in time_stamps:
+          pl.close('all')
+          # find closest time stamp for reference bunch
+          pl.clf()
+          self.plot_all_ipac17(slot=slot,time_stamp=time_stamp,
+            time_stamp_ref=time_stamps[0],plane=plane,xaxis=xaxis)
+          fnpl = os.path.join(tmpdir,'slot_%s_plane_%s_%05d.png'%(slot,
+                              plane,pngcount))
+          if verbose: print '... save png %s'%(fnpl)
+          pl.savefig(fnpl)
+          pngcount += 1
+        # create video from pngs
+        if len(time_stamps) > 0:
+          if verbose:
+            print '... creating .gif file with convert'
+          cmd="convert -delay %s %s %s"%(delay,
+               os.path.join(tmpdir,'slot_%s_plane_%s_*.png'%(slot,plane)),
+               os.path.join(plt_dir,'slot_%s_plane_%s.gif'%(slot,plane)))
+          os.system(cmd)
+        # delete png files already
+        if (export is False) and (os.path.exists(tmpdir) is True):
+          shutil.rmtree(tmpdir)
+    # delete temporary directory
+    if (export is False) and (os.path.exists(tmpdir) is True):
+      shutil.rmtree(tmpdir)
