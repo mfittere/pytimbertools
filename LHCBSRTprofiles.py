@@ -2098,7 +2098,7 @@ class BSRTprofiles(object):
       shutil.rmtree(tmpdir)
   def plot_all_ipac17(self,slot = None, time_stamp = None, 
                time_stamp_ref = None, xaxis = 'sigma', plane = 'h',
-               verbose = False):
+               resavg=False,resfit=True,verbose = False):
     """
     simplified version of plot_all for IPAC. Takes as reference bunch
     the same bunch.
@@ -2118,6 +2118,9 @@ class BSRTprofiles(object):
                       used for absolute emittance and beam sigma 
                       calculation)
     plane : plane of profile, either 'h' or 'v'
+    resavg: plot residual of distribution (time_stamp) in respect to
+            reference distribution (time_stamp_ref)
+    resfit: plot deviation from Gaussian fit
     verbose : verbose option for additional output
     
     Returns:
@@ -2169,9 +2172,10 @@ class BSRTprofiles(object):
     c_gauss, a_gauss = stat_aux['c_gauss'], stat_aux['a_gauss']
     cent_gauss = stat_aux['cent_gauss']
     sigma_gauss    = stat_aux['sigma_gauss']
-    ax1.plot(prof['pos']*xscale,tb.gauss_pdf(prof['pos'],
-             c_gauss,a_gauss,cent_gauss,sigma_gauss),
-             color='r',linewidth=1,label='Gaussian fit')
+    amp_gauss = tb.gauss_pdf(prof['pos'],c_gauss,a_gauss,cent_gauss,
+                             sigma_gauss)
+    ax1.plot(prof['pos']*xscale,amp_gauss,color='r',
+             linewidth=1,label='Gaussian fit')
     ax1.set_ylim(1.e-3,0.7)
     ax1.grid(b=True)
     ax1.set_ylabel(r'probability $A$ [a.u.]',fontsize=14)
@@ -2180,24 +2184,31 @@ class BSRTprofiles(object):
     ax1.legend(bbox_to_anchor=(0., 1.02, 1., .102), loc=3,
                   ncol=2, mode="expand", borderaxespad=0.,
                   fontsize=14)
-    # 2) residual, only average profile
-    # get overlapping positions
-    prof_ref = self.get_profile_norm_mvavg(slot=slot,
-                   time_stamp = time_stamp_ref, plane = plane)
-    xval = list(set(prof['pos']) and set(prof_ref['pos']))
-    mask     = np.array([ pos in xval for pos in prof['pos'] ],
-                        dtype=bool)
-    mask_ref = np.array([ pos in xval for pos in prof_ref['pos'] ],
-                        dtype=bool)
-    pos = prof['pos'][mask]*xscale
-    yscale = 1.e-2
-    res = 1.e2*(prof['amp'][mask]-prof_ref['amp'][mask])
-    sig = 1.e2*(np.sqrt(prof['amperr'][mask]**2+prof_ref['amperr'][mask]**2)) 
-    ax2.plot(pos,res,'k-')
-    ax2.fill_between(x=pos,y1=res-sig,y2=res+sig,color='k',alpha=0.3)
-    ax2.set_ylim(-5,5)
-    ax2.grid(b=True)
-    ax2.set_ylabel(r'residual $A-A_{\mathrm{ref}}$ [$10^{-2}$]',fontsize=14)
+    if resfit:
+      res = 1.e2*(prof['amp']-amp_gauss)
+      ax2.plot(prof['pos']*xscale,res,'r-')
+      ax2.set_ylim(-5,5)
+      ax2.grid(b=True)
+      ax2.set_ylabel(r'residual $A-A_{\mathrm{Gauss}}$ [$10^{-2}$]',
+                     fontsize=14)
+    # 3) residual, only average profile
+    if resavg:
+      # get overlapping positions
+      prof_ref = self.get_profile_norm_mvavg(slot=slot,
+                     time_stamp = time_stamp_ref, plane = plane)
+      xval = list(set(prof['pos']) and set(prof_ref['pos']))
+      mask     = np.array([ pos in xval for pos in prof['pos'] ],
+                          dtype=bool)
+      mask_ref = np.array([ pos in xval for pos in prof_ref['pos'] ],
+                          dtype=bool)
+      pos = prof['pos'][mask]*xscale
+      res = 1.e2*(prof['amp'][mask]-prof_ref['amp'][mask])
+      sig = 1.e2*(np.sqrt(prof['amperr'][mask]**2+prof_ref['amperr'][mask]**2)) 
+      ax2.plot(pos,res,'k-')
+      ax2.fill_between(x=pos,y1=res-sig,y2=res+sig,color='k',alpha=0.3)
+      ax2.set_ylim(-5,5)
+      ax2.grid(b=True)
+      ax2.set_ylabel(r'residual $A-A_{\mathrm{ref}}$ [$10^{-2}$]',fontsize=14)
     if xaxis == 'sigma' and xscale != 1:
       # now rescale the xaxis
       for ax in ax1,ax2:
@@ -2214,9 +2225,9 @@ class BSRTprofiles(object):
       ax2.set_xlabel('position [mm]',fontsize=14)
     pl.gcf().subplots_adjust(left=0.18,top=0.87,hspace=0.05)
   def mk_profile_video_ipac17(self, slots = None, t1=None, t2=None,
-                       xaxis='mm',
-                       plt_dir='BSRTprofile_gifs', delay=20, 
-                       export=False,verbose=False):
+        xaxis='mm',resavg=False,resfit=True,
+        plt_dir='BSRTprofile_gifs', delay=20, 
+        export=False,verbose=False):
     """
     Generates a video of the profiles of slot with *slot* using 
     plot_all_ipac17
@@ -2235,6 +2246,9 @@ class BSRTprofiles(object):
                       (due to LSF conversion only Gaussian fit should be
                       used for absolute emittance and beam sigma 
                       calculation)
+    resavg: plot residual of distribution (time_stamp) in respect to
+            reference distribution (time_stamp_ref)
+    resfit: plot deviation from Gaussian fit
     plt_dir : directory to save videos
     delay : option for convert to define delay between pictures
     export : If True do not delete png files
@@ -2274,7 +2288,8 @@ class BSRTprofiles(object):
           # find closest time stamp for reference bunch
           pl.clf()
           self.plot_all_ipac17(slot=slot,time_stamp=time_stamp,
-            time_stamp_ref=time_stamps[0],plane=plane,xaxis=xaxis)
+            time_stamp_ref=time_stamps[0],plane=plane,xaxis=xaxis,
+            resavg=resavg,resfit=resfit)
           fnpl = os.path.join(tmpdir,'slot_%s_plane_%s_%05d.png'%(slot,
                               plane,pngcount))
           if verbose: print '... save png %s'%(fnpl)
