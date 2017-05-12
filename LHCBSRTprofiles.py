@@ -1981,7 +1981,7 @@ class BSRTprofiles(object):
       pl.gca().legend(bbox_to_anchor=(0., 1.02, 1., .102), loc=3,
                     ncol=2, mode="expand", borderaxespad=0.,
                     fontsize=10)
-    pl.subplots_adjust(hspace=7)
+    pl.subplots_adjust(hspace=5,wspace=0.1,top=0.8)
     pl.tight_layout()
     return flaux
   def mk_profile_video(self, slots = None, t1=None, t2=None,
