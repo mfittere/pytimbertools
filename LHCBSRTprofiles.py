@@ -1402,7 +1402,7 @@ class BSRTprofiles(object):
     else:
       return self.profiles_mvavg_stat[plane][slot][mask]
   def _plot_profile(self, slot = None, time_stamp = None, plane = 'h',
-                    norm = True, mvavg = False,
+                    xaxis = 'mm', norm = True, mvavg = False,
                     smooth = 0.025, verbose = False):
     """
     Plot all profiles for specific slot and time. Plot title displays 
@@ -1412,6 +1412,11 @@ class BSRTprofiles(object):
     -----------
     slot : slot number
     time_stamp : time stamp in unix time
+    xaxis: if mm = leave xaxis in mm as for raw profiles
+           if sigma = normalize to sigma calculated with Gaussian fit
+                      (due to LSF conversion only Gaussian fit should be
+                      used for absolute emittance and beam sigma 
+                      calculation)
     plane : plane of profile, either 'h' or 'v'
     norm : if norm = false raw profiles are plotted
            if norm = True profiles are normalized to represent a 
@@ -1436,6 +1441,7 @@ class BSRTprofiles(object):
     """
     # flag if profile plot failed (used for mk_profile_video)
     check_plot = True
+    xscale = 1 #scaling for mm or sigma for x-axis, is reset in case of sigma
     # select profile for slot and time stamp
     # normalized profiles
     if norm:
@@ -1463,13 +1469,17 @@ class BSRTprofiles(object):
         q_qgauss = stat_aux['q_qgauss']
         cent_qgauss = stat_aux['cent_qgauss']
         beta_qgauss    = stat_aux['beta_qgauss']
+        if xaxis == 'sigma':
+          sigma_beam  = self.sigma_prof_to_sigma_beam(sigma_prof=sigma_gauss,
+                       plane=plane,time_stamp=time_stamp)
+          xscale = 1/sigma_beam
     # raw data profile
     else:
       profs = self.get_profile(slot=slot,time_stamp=time_stamp,
                                plane=plane)
     for i in xrange(len(profs)):
       try:
-        pl.plot(profs[i]['pos'],profs[i]['amp'],
+        pl.plot(xscale*profs[i]['pos'],profs[i]['amp'],
                 label='profile %s'%(i+1),linestyle='-',
                 color=profile_colors.values()[i])
         if norm:
@@ -1501,19 +1511,25 @@ class BSRTprofiles(object):
         profs_avg['pos'] = prof_smooth[:,0]
         profs_avg['amp'] = prof_smooth[:,1]
       # plot average over profiles
-      pl.plot(profs_avg['pos'],profs_avg['amp'],
+      pl.plot(profs_avg['pos']*xscale,profs_avg['amp'],
               label = 'average profile',color='k',linestyle='-')
       if self.profiles_avg_stat is not None:
         # plot Gaussian fit
-        pl.plot(profs_avg['pos'],tb.gauss_pdf(profs_avg['pos'],
+        pl.plot(profs_avg['pos']*xscale,tb.gauss_pdf(profs_avg['pos'],
                 c_gauss,a_gauss,cent_gauss,sigma_gauss),
                 color=fit_colors['Red'],
                 linestyle='--',linewidth=1,label='Gaussian fit')
         # plot q-Gaussian fit
-        pl.plot(profs_avg['pos'],tb.qgauss_pdf(profs_avg['pos'],
+        pl.plot(profs_avg['pos']*xscale,tb.qgauss_pdf(profs_avg['pos'],
                 c_qgauss,a_qgauss,q_qgauss,cent_qgauss,beta_qgauss),
                 color=fit_colors['DarkRed'],
                 linestyle='-',linewidth=1,label='q-Gaussian fit')
+        if xaxis == 'sigma':
+          pl.gca().set_xlim(-6,6)
+          lbl=(r'position [$\sigma_{\rm{Beam}}$], '+
+               r'$\sigma_{\rm{Beam}}$ = %2.2f mm'%sigma_beam)
+          pl.gca().set_xlabel(lbl,fontsize=14)
+
     return check_plot
   def plot_profile(self, slot = None, time_stamp = None, plane = 'h',
                    verbose = False):
@@ -1557,8 +1573,8 @@ class BSRTprofiles(object):
     """
     self._plot_profile(slot=slot,time_stamp=time_stamp,plane=plane,
                        norm=True,mvavg=mvavg,smooth=smooth,verbose=verbose)
-  def plot_cumsum(self, slot = None, time_stamp = None, plane = 'h',
-                  mvavg = False, verbose = False):
+  def plot_cumsum(self, slot = None, time_stamp = None,xaxis='mm', 
+                  plane = 'h', mvavg = False, verbose = False):
     """
     Plot cumulative distribution function of normalized profiles for 
     a specific slot and time. Profiles are normalized to represent
@@ -1572,6 +1588,11 @@ class BSRTprofiles(object):
     -----------
     slot : slot number
     time_stamp : time stamp in unix time
+    xaxis: if mm = leave xaxis in mm as for raw profiles
+           if sigma = normalize to sigma calculated with Gaussian fit
+                      (due to LSF conversion only Gaussian fit should be
+                      used for absolute emittance and beam sigma 
+                      calculation)
     plane : plane of profile, either 'h' or 'v'
     mvavg : if mvavg = False plot average profile for each time stamp
                        (self.profiles_norm_avg)
@@ -1584,7 +1605,9 @@ class BSRTprofiles(object):
     check_plot : bool, flag if profile plot failed
                  (used for mk_profile_video)
     """
-    #select profile for slot and time stamp
+    # scaling for mm or sigma for x-axis, is reset in case of sigma
+    xscale = 1
+    # select profile for slot and time stamp
     profs = self.get_profile_norm(slot=slot,time_stamp=time_stamp,
                                   plane=plane)
     if mvavg is True:
@@ -1596,13 +1619,19 @@ class BSRTprofiles(object):
     if self.profiles_avg_stat is not None:
       sta = self.get_profile_avg_stat(slot=slot,
                    time_stamp=time_stamp,plane=plane)
+      if xaxis == 'sigma':
+        sigma_beam  = self.sigma_prof_to_sigma_beam(
+                       sigma_prof=sta['sigma_gauss'],
+                       plane=plane,time_stamp=time_stamp)
+        xscale = 1/sigma_beam
+
     # flag if profile plot failed
     check_plot = True
     # individual profiles
     for i in xrange(len(profs)):
       try:
         dx = profs[i]['pos'][1]-profs[i]['pos'][0]
-        pl.plot(profs[i]['pos'],(dx*profs[i]['amp']).cumsum(),
+        pl.plot(profs[i]['pos']*xscale,(dx*profs[i]['amp']).cumsum(),
                 label='profile %s'%(i+1),
                 color=profile_colors.values()[i])
       except ValueError:
@@ -1616,19 +1645,24 @@ class BSRTprofiles(object):
     # average profile
     if check_plot:
       dx = profs[i]['pos'][1]-profs[i]['pos'][0]
-      pl.plot(profs_avg['pos'],(dx*profs_avg['amp']).cumsum(),
+      pl.plot(profs_avg['pos']*xscale,(dx*profs_avg['amp']).cumsum(),
             label = 'average profile',color='k',linestyle='-')
+      pl.xlabel('position [mm]')
       if self.profiles_avg_stat is not None:
-        pl.plot(profs_avg['pos'],(dx*tb.gauss_pdf(profs_avg['pos'],
+        pl.plot(profs_avg['pos']*xscale,(dx*tb.gauss_pdf(profs_avg['pos'],
                 sta['c_gauss'],sta['a_gauss'],sta['cent_gauss'],
                 sta['sigma_gauss'])).cumsum(),
                 label = 'Gaussian fit',color = fit_colors['Red'],
                 linestyle = '--')
-        pl.plot(profs_avg['pos'],(dx*tb.qgauss_pdf(profs_avg['pos'],
+        pl.plot(profs_avg['pos']*xscale,(dx*tb.qgauss_pdf(profs_avg['pos'],
                 sta['c_qgauss'],sta['a_qgauss'],sta['q_qgauss'],
                 sta['cent_qgauss'],sta['beta_qgauss'])).cumsum(),label = 'Gaussian fit', 
                 color = fit_colors['DarkRed'], linestyle = '-')
-      pl.xlabel('position [mm]')
+        if xaxis == 'sigma':
+          pl.gca().set_xlim(-6,6)
+          lbl=(r'position [$\sigma_{\rm{Beam}}$], '+
+               r'$\sigma_{\rm{Beam}}$ = %2.2f mm'%sigma_beam)
+          pl.gca().set_xlabel(lbl,fontsize=14)
       pl.ylabel(r'cumulative distribution functions [a.u.]')
       pl.ylim(-0.05,1.05)
       pl.grid(b=True)
@@ -1640,7 +1674,8 @@ class BSRTprofiles(object):
                           plane.upper(),ts))
     return check_plot
   def _plot_residual_ratio(self, flag, flagprof, slot = None,
-          time_stamp = None, slot_ref = None, time_stamp_ref = None, 
+          time_stamp = None, xaxis='mm',slot_ref = None,
+          time_stamp_ref = None, 
           plane = 'h', mvavg = False, errbar = False, smooth = 0.025,
           verbose = False):
     """
@@ -1659,6 +1694,11 @@ class BSRTprofiles(object):
               *slot* as reference slot
     time_stamp_ref : reference time stamp in unix time [ns], if None
                      use first time stamp of slot *slot_ref*
+    xaxis: if mm = leave xaxis in mm as for raw profiles
+           if sigma = normalize to sigma calculated with Gaussian fit
+                      (due to LSF conversion only Gaussian fit should be
+                      used for absolute emittance and beam sigma 
+                      calculation)
     plane : plane of profile, either 'h' or 'v'
     mvavg : if mvavg = False plot average profile for each time stamp
                        (self.profiles_norm_avg)
@@ -1691,6 +1731,20 @@ class BSRTprofiles(object):
       return
     if smooth is None:
       smooth = 0
+    # get statistical parameters
+    if self.profiles_avg_stat is not None:
+      if mvavg is True:
+        sta = self.get_profile_mvavg_stat(slot=slot,
+                   time_stamp=time_stamp,plane=plane)
+      else:
+        sta = self.get_profile_avg_stat(slot=slot,
+                       time_stamp=time_stamp,plane=plane)
+      if xaxis == 'sigma':
+        sigma_beam  = self.sigma_prof_to_sigma_beam(
+                       sigma_prof=sta['sigma_gauss'],
+                       plane=plane,time_stamp=time_stamp)
+        xscale = 1/sigma_beam
+
     # select profile for slot and time stamp
     # individual profiles
     if flagprof == 'all':
@@ -1733,11 +1787,11 @@ class BSRTprofiles(object):
       for i in xrange(len(profs)):
         try:
           if flag == 'residual':
-            pl.plot(profs[i]['pos'][mask],
+            pl.plot(profs[i]['pos'][mask]*xscale,
                     profs[i]['amp'][mask]-profs_ref[i]['amp'][mask_ref],
                     label='profile %s'%(i+1))
           if flag == 'ratio':
-            pl.plot(profs[i]['pos'][mask],
+            pl.plot(profs[i]['pos'][mask]*xscale,
                     profs[i]['amp'][mask]/profs_ref[i]['amp'][mask_ref],
                     label='profile %s'%(i+1))
         except ValueError:
@@ -1759,20 +1813,13 @@ class BSRTprofiles(object):
       try:
         # plot error of residual as one sigma envelope
         # res_error = sqrt(sig(profs_avg)**2+sig(profs_avg_ref)**2)
-        pl.plot(pos_avg,amp_avg-amp_ref,
+        pl.plot(pos_avg*xscale,amp_avg-amp_ref,
                 label = 'average profile',color='k',linestyle='-')
         if errbar:
           sig = np.sqrt(sig_avg**2+sig_ref**2)
           res = amp_avg - amp_ref
-          pl.fill_between(profs_avg['pos'][mask],res-sig,res+sig,
+          pl.fill_between(profs_avg['pos'][mask]*xscale,res-sig,res+sig,
                   alpha=0.2,color='k')
-        if self.profiles_avg_stat is not None:
-          if mvavg is True:
-            sta = self.get_profile_mvavg_stat(slot=slot,
-                       time_stamp=time_stamp,plane=plane)
-          else:
-            sta = self.get_profile_avg_stat(slot=slot,
-                       time_stamp=time_stamp,plane=plane)
           # Gaussian fit
           c_gauss, a_gauss = sta['c_gauss'], sta['a_gauss']
           cent_gauss = sta['cent_gauss']
@@ -1782,13 +1829,13 @@ class BSRTprofiles(object):
           q_qgauss = sta['q_qgauss']
           cent_qgauss = sta['cent_qgauss']
           beta_qgauss    = sta['sigma_qgauss']
-          pl.plot(pos_avg,amp_avg-
+          pl.plot(pos_avg*xscale,amp_avg-
                   tb.gauss_pdf(pos_avg,sta['c_gauss'],
                     sta['a_gauss'],sta['cent_gauss'],
                     sta['sigma_gauss']),
                   label = 'Gaussian fit',
                   color=fit_colors['Red'],linestyle='--')
-          pl.plot(pos_avg,amp_avg-
+          pl.plot(pos_avg*xscale,amp_avg-
                   tb.qgauss_pdf(pos_avg,sta['c_qgauss'],
                     sta['a_qgauss'],sta['q_qgauss'],
                     sta['cent_qgauss'],sta['beta_qgauss']), 
@@ -1799,19 +1846,25 @@ class BSRTprofiles(object):
         pass
     if flag == 'ratio':
       try:
-        pl.plot(pos_avg,amp_avg/amp_ref,
+        pl.plot(pos_avg*xscale,amp_avg/amp_ref,
                 label = 'average profile',color='k',linestyle='-')
         if errbar:
           rat = amp_avg/amp_ref
           sig = np.abs(rat)*np.sqrt((sig_avg/amp_avg)**2
                                     +(sig_ref/amp_ref)**2)
-          pl.fill_between(pos_avg,rat-sig,rat+sig,
+          pl.fill_between(pos_avg*xscale,rat-sig,rat+sig,
                   alpha=0.2,color='k')
       except (ValueError,IndexError):
         check_plot = False
         pass
     if check_plot:
-      pl.xlabel('position [mm]')
+      if xaxis == 'sigma' and self.profiles_avg_stat is not None:
+        pl.gca().set_xlim(-6,6)
+        lbl=(r'position [$\sigma_{\rm{Beam}}$], '+
+            r'$\sigma_{\rm{Beam}}$ = %2.2f mm'%sigma_beam)
+        pl.gca().set_xlabel(lbl,fontsize=14)
+      else:
+        pl.xlabel('position [mm]')
       if flag == 'residual':
         pl.ylabel(r'residual $A-A_{\mathrm{ref}}$ [a.u.]')
       if flag == 'ratio':
@@ -1826,7 +1879,7 @@ class BSRTprofiles(object):
     return check_plot
   def plot_all(self,slot = None, time_stamp = None, slot_ref = None,
                time_stamp_ref = None, xaxis = 'mm', plane = 'h', norm = True, 
-               mvavg = False, errbar = False, smooth = None, log = True,
+               mvavg = False, errbar = True, smooth = None, log = True,
                verbose = False):
     """
     plot normalized or raw data profiles, cumulative distribution 
@@ -1894,7 +1947,7 @@ class BSRTprofiles(object):
     # flaux = flag for checking if profile plots have failed
     flaux = self._plot_profile(slot=slot,time_stamp=time_stamp,
                               plane=plane,norm=norm,smooth=smooth,
-                              mvavg=mvavg,verbose=verbose)
+                              mvavg=mvavg,xaxis=xaxis,verbose=verbose)
     if norm:
       pl.gca().set_ylabel('probability [a.u.]')
     if log:
@@ -1902,14 +1955,14 @@ class BSRTprofiles(object):
     # 2) cumulative sum
     pl.subplot(224)
     self.plot_cumsum(slot=slot,time_stamp=time_stamp,plane=plane,
-                     verbose=verbose)
+                     xaxis=xaxis,verbose=verbose)
     pl.gca().set_ylabel('cumulative dist. [a.u.]')
 #     3) residual, only average profile
     pl.subplot(221)
     self._plot_residual_ratio(flag='residual', flagprof='avg', 
            slot=slot, time_stamp=time_stamp, slot_ref=slot_ref,
            time_stamp_ref=time_stamp_ref, plane=plane, mvavg = mvavg,
-           errbar=errbar, smooth=smooth,
+           errbar=errbar, smooth=smooth,xaxis=xaxis,
            verbose=verbose)
     pl.gca().set_ylim(-0.05,0.05)
 #     4) ratio
@@ -1917,10 +1970,10 @@ class BSRTprofiles(object):
     self._plot_residual_ratio(flag='ratio', flagprof='avg', 
            slot=slot, time_stamp=time_stamp, slot_ref=slot_ref,
            time_stamp_ref=time_stamp_ref, plane=plane, mvavg=mvavg, 
-           errbar=errbar, smooth=smooth,
+           errbar=errbar, smooth=smooth,xaxis=xaxis,
            verbose=verbose)
     pl.gca().set_ylim(-1,5)
-    # remove subplot titles, shring legend size and put it on top of
+    # remove subplot titles, shrink legend size and put it on top of
     # the subplot
     for i in xrange(4):
       pl.subplot(2,2,i+1)
@@ -1928,32 +1981,7 @@ class BSRTprofiles(object):
       pl.gca().legend(bbox_to_anchor=(0., 1.02, 1., .102), loc=3,
                     ncol=2, mode="expand", borderaxespad=0.,
                     fontsize=10)
-      # rescale the xaxis to beam sigma where the value
-      # of the reference bunch is used
-      if xaxis == 'sigma' and self.profiles_avg_stat is not None:
-        if mvavg is True:
-          stat_aux = self.get_profile_mvavg_stat(slot=slot_ref,
-                     time_stamp=time_stamp_ref,plane=plane)
-        else:
-          stat_aux = self.get_profile_avg_stat(slot=slot_ref,
-                     time_stamp=time_stamp_ref,plane=plane)
-        sigma_gauss = stat_aux['sigma_gauss']
-        sigma_beam  = self.sigma_prof_to_sigma_beam(sigma_prof=sigma_gauss,
-                         plane=plane,time_stamp=time_stamp_ref)
-        # now rescale the xaxis
-        pl.gca().set_xlim(-8,8)
-        ax = pl.gca()
-        xticks_mm = ax.get_xticks()
-        xticks_labels = [str(x) for x in xticks_mm ]
-        xticks_beam = xticks_mm*sigma_gauss/sigma_beam
-        ax.set_xticks(xticks_beam)
-        ax.set_xticklabels(xticks_labels)
-        pl.gca().set_xlabel(r'position [$\sigma_{\rm{Beam}}$], $\sigma_{\rm{Beam}}$ = %2.2f mm'%sigma_beam)
-      #otherwise leave unchanged
-      else:
-        pl.gca().set_xlim(-8,8)
-        pl.gca().set_xlabel('position [mm]')
-    pl.subplots_adjust(hspace=9)
+    pl.subplots_adjust(hspace=7)
     pl.tight_layout()
     return flaux
   def mk_profile_video(self, slots = None, t1=None, t2=None,
@@ -2141,22 +2169,22 @@ class BSRTprofiles(object):
     ts = ld.dumpdate(t=time_stamp*1.e-9,
                      fmt='%H:%M:%S',zone='cern')
     ts_ref = ld.dumpdate(t=time_stamp_ref*1.e-9,
-                           fmt='%H:%M:%S',zone='cern')
+                         fmt='%H:%M:%S',zone='cern')
     # adjust figure size
     num=pl.gcf().number
     pl.clf()
-    f,(ax1,ax2) = pl.subplots(2,1, sharex=True,num=num)
+    f,(ax1,ax2) = pl.subplots(2,1, sharex=True,num=num,gridspec_kw={'hspace':0.45})
     f.set_size_inches(5, 6, forward=True)
     pl.suptitle(r'%s plane, slot %s, $t$=%s, '%(plane.upper(),slot,ts) +
                 r'$t_{\rm ref}$ = %s'%(ts_ref),fontsize=14)
     # rescale position if xaxis=='sigma'
     if xaxis == 'sigma' and self.profiles_avg_stat is not None:
       stat_aux = self.get_profile_mvavg_stat(slot=slot,
-                 time_stamp=time_stamp_ref,plane=plane)
+                 time_stamp=time_stamp,plane=plane)
       sigma_gauss = stat_aux['sigma_gauss']
       sigma_beam  = self.sigma_prof_to_sigma_beam(sigma_prof=sigma_gauss,
-                       plane=plane,time_stamp=time_stamp_ref)
-      xscale = sigma_beam/sigma_gauss 
+                       plane=plane,time_stamp=time_stamp)
+      xscale = 1/sigma_beam 
     else:
       xscale = 1
     # 1) plot moving average profile + Gaussian fit
@@ -2184,13 +2212,6 @@ class BSRTprofiles(object):
     ax1.legend(bbox_to_anchor=(0., 1.02, 1., .102), loc=3,
                   ncol=2, mode="expand", borderaxespad=0.,
                   fontsize=14)
-    if resfit:
-      res = 1.e2*(prof['amp']-amp_gauss)
-      ax2.plot(prof['pos']*xscale,res,'r-')
-      ax2.set_ylim(-5,5)
-      ax2.grid(b=True)
-      ax2.set_ylabel(r'residual $A-A_{\mathrm{Gauss}}$ [$10^{-2}$]',
-                     fontsize=14)
     # 3) residual, only average profile
     if resavg:
       # get overlapping positions
@@ -2204,15 +2225,23 @@ class BSRTprofiles(object):
       pos = prof['pos'][mask]*xscale
       res = 1.e2*(prof['amp'][mask]-prof_ref['amp'][mask])
       sig = 1.e2*(np.sqrt(prof['amperr'][mask]**2+prof_ref['amperr'][mask]**2)) 
-      ax2.plot(pos,res,'k-')
+      ax2.plot(pos,res,'k-',label=r'Profile($t$) - Profile($t_{\rm{ref}}$)')
       ax2.fill_between(x=pos,y1=res-sig,y2=res+sig,color='k',alpha=0.3)
+    #    Gaussian fit residual
+    if resfit:
+      res = 1.e2*(prof['amp']-amp_gauss)
+      ax2.plot(prof['pos']*xscale,res,'r-',label='Profile($t$) - Gaussian fit($t$)')
+    if resfit or resavg:
       ax2.set_ylim(-5,5)
       ax2.grid(b=True)
-      ax2.set_ylabel(r'residual $A-A_{\mathrm{ref}}$ [$10^{-2}$]',fontsize=14)
+      ax2.set_ylabel(r'residual [$10^{-2}$]',fontsize=14)
+      ax2.legend(bbox_to_anchor=(0., 1.02, 1., .102), loc=3,
+                  ncol=1, mode="expand", borderaxespad=0.,
+                  fontsize=14)
     if xaxis == 'sigma' and xscale != 1:
       # now rescale the xaxis
       for ax in ax1,ax2:
-        ax.set_xlim(-7,7)
+        ax.set_xlim(-6,6)
         ax.yaxis.set_tick_params(labelsize=14)
       lbl=(r'position [$\sigma_{\rm{Beam}}$], '+
             r'$\sigma_{\rm{Beam}}$ = %2.2f mm'%sigma_beam)
