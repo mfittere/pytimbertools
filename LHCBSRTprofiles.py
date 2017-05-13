@@ -1607,24 +1607,25 @@ class BSRTprofiles(object):
     """
     # scaling for mm or sigma for x-axis, is reset in case of sigma
     xscale = 1
+    sta = None
     # select profile for slot and time stamp
     profs = self.get_profile_norm(slot=slot,time_stamp=time_stamp,
                                   plane=plane)
     if mvavg is True:
       profs_avg = self.get_profile_norm_mvavg(slot=slot,
                        time_stamp=time_stamp,plane=plane)
+      sta = self.get_profile_avg_stat(slot=slot,
+                   time_stamp=time_stamp,plane=plane)
     else:
       profs_avg = self.get_profile_norm_avg(slot=slot,
                        time_stamp=time_stamp,plane=plane)
-    if self.profiles_avg_stat is not None:
-      sta = self.get_profile_avg_stat(slot=slot,
+      sta = self.get_profile_mvavg_stat(slot=slot,
                    time_stamp=time_stamp,plane=plane)
-      if xaxis == 'sigma':
-        sigma_beam  = self.sigma_prof_to_sigma_beam(
-                       sigma_prof=sta['sigma_gauss'],
-                       plane=plane,time_stamp=time_stamp)
-        xscale = 1/sigma_beam
-
+    if xaxis == 'sigma' and sta is not None:
+      sigma_beam  = self.sigma_prof_to_sigma_beam(
+                     sigma_prof=sta['sigma_gauss'],
+                     plane=plane,time_stamp=time_stamp)
+      xscale = 1/sigma_beam
     # flag if profile plot failed
     check_plot = True
     # individual profiles
