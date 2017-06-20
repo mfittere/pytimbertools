@@ -80,14 +80,23 @@ class BSRTprofiles(object):
           time_stamp : time stamp in unix time [ns]
           pos : position [um]
           amp : amplitude of profile [a.u.]
-  profiles_norm : same format as profiles. Contains all profiles are
-      normalized to represent a probability distribution with an
-      integral of 1.
-  profiles_norm_avg : same fromat as profile. Contains for each plane,
-      slot and timestamp the average of all normalized profiles for
-      this time stamp.
-  profiles_avg_stat: statistical parameters calculated for average profile
-      for each timestamp
+
+  Only filled after running self.norm():
+    profiles_norm : same format as profiles. Contains all profiles are
+        normalized to represent a probability distribution with an
+        integral of 1.
+    profiles_norm_avg : same fromat as profile. Contains for each plane,
+        slot and timestamp the average of all normalized profiles for
+        this time stamp .
+    profiles_norm_mvavg: same format as profiles. Contains for each plane,
+        slot and timestamp the moving average over several normalized. The
+        default is 11 profiles (5 previous + 5 after).
+
+  Only filled after running self.get_stats():
+    profiles_norm_avg_stat: statistical parameters calculated for average profile
+        for each timestamp
+    profiles_norm_mvavg_stat: statistical parameters calculated for moving 
+        average profile for each timestamp
 
   Methods:
   --------
@@ -136,7 +145,7 @@ class BSRTprofiles(object):
   def __init__(self, beam=None,db=None,
                records=None, profiles=None, profiles_norm=None,
                profiles_norm_avg=None, profiles_norm_mvavg=None, 
-               profiles_avg_stat=None, profiles_mvavg_stat=None,
+               profiles_norm_avg_stat=None, profiles_norm_mvavg_stat=None,
                bgnavg = None, nmvavg = None):
     self.beam = beam
     self.db = db
@@ -149,18 +158,18 @@ class BSRTprofiles(object):
     self.profiles_norm = profiles_norm
     self.profiles_norm_avg = profiles_norm_avg
     self.profiles_norm_mvavg = profiles_norm_avg
-    self.profiles_avg_stat = profiles_avg_stat
-    self.profiles_mvavg_stat = profiles_avg_stat
-    if self.profiles_avg_stat is None:
-      self.profiles_avg_stat_var = None
-    if self.profiles_mvavg_stat is None:
-      self.profiles_mvavg_stat_var = None
+    self.profiles_norm_avg_stat = profiles_norm_avg_stat
+    self.profiles_norm_mvavg_stat = profiles_norm_avg_stat
+    if self.profiles_norm_avg_stat is None:
+      self.profiles_norm_avg_stat_var = None
+    if self.profiles_norm_mvavg_stat is None:
+      self.profiles_norm_mvavg_stat_var = None
     else:
       # take first plane and slot in order to get profile_stat named fields
-      plane_aux = self.profiles_avg_stat.keys()[0]
-      slot_aux = self.profiles_avg_stat[plane_aux].keys()[0] 
-      self.profiles_avg_stat_var = self.profiles_avg_stat[plane_aux][slot_aux].dtype.names
-      self.profiles_mvavg_stat_var = self.profiles_mvavg_stat[plane_aux][slot_aux].dtype.names
+      plane_aux = self.profiles_norm_avg_stat.keys()[0]
+      slot_aux = self.profiles_norm_avg_stat[plane_aux].keys()[0] 
+      self.profiles_norm_avg_stat_var = self.profiles_norm_avg_stat[plane_aux][slot_aux].dtype.names
+      self.profiles_norm_mvavg_stat_var = self.profiles_norm_mvavg_stat[plane_aux][slot_aux].dtype.names
     # -- background estimate
     # internal flag to check if background has been removed
     self._rm_bg = False
@@ -829,7 +838,7 @@ class BSRTprofiles(object):
     Returns:
     --------
     self : BSRTprofiles class object with recalculated 
-           self.profiles_avg_stat
+           self.profiles_norm_avg_stat
 
     Conversion from beam sigma to emittance (only valid for Gaussian
     distributions):
@@ -876,14 +885,14 @@ class BSRTprofiles(object):
     if self.profiles_norm_avg is None:
       self.norm(verbose=verbose)
     # initialize if data is empty
-    if self.profiles_avg_stat is None:
-      self.profiles_avg_stat={}
-      self.profiles_avg_stat['h']={}
-      self.profiles_avg_stat['v']={}
-    if self.profiles_mvavg_stat is None:
-      self.profiles_mvavg_stat={}
-      self.profiles_mvavg_stat['h']={}
-      self.profiles_mvavg_stat['v']={}
+    if self.profiles_norm_avg_stat is None:
+      self.profiles_norm_avg_stat={}
+      self.profiles_norm_avg_stat['h']={}
+      self.profiles_norm_avg_stat['v']={}
+    if self.profiles_norm_mvavg_stat is None:
+      self.profiles_norm_mvavg_stat={}
+      self.profiles_norm_mvavg_stat['h']={}
+      self.profiles_norm_mvavg_stat['v']={}
     # get lsf factor, beta@BSRT and energy from logging databse
     # get lsf correction factor, beta function and beam energy
     if ((self.beam) is not None) and ((self.beam).upper() in ['B1','B2']):
@@ -907,13 +916,13 @@ class BSRTprofiles(object):
         if verbose:
           print('... start slot %s'%slot)
         # 1) data is already calculated + force = False-> go to next slot
-        if ((slot in self.profiles_avg_stat[plane].keys()) and 
-            (slot in self.profiles_mvavg_stat[plane].keys()) and (force is False)):
+        if ((slot in self.profiles_norm_avg_stat[plane].keys()) and 
+            (slot in self.profiles_norm_mvavg_stat[plane].keys()) and (force is False)):
           continue
         # 2) calculate/recalculate statistical parameters
         # initialize/delete old data
-        self.profiles_avg_stat[plane][slot] = []
-        self.profiles_mvavg_stat[plane][slot] = []
+        self.profiles_norm_avg_stat[plane][slot] = []
+        self.profiles_norm_mvavg_stat[plane][slot] = []
         for time_stamp in self.get_timestamps(slot=slot,plane=plane):
           # 1) estimate centroid with three different methods:
           # 1a) Gaussian fit (cent_gauss)
@@ -1230,9 +1239,9 @@ class BSRTprofiles(object):
                 sum_bin_left,sum_bin_right,entropie
                 )
             if avgflag == 'avg': 
-              self.profiles_avg_stat[plane][slot].append(data)
+              self.profiles_norm_avg_stat[plane][slot].append(data)
             if avgflag == 'mvavg': 
-              self.profiles_mvavg_stat[plane][slot].append(data)
+              self.profiles_norm_mvavg_stat[plane][slot].append(data)
     # convert to a structured array
     ftype=[('time_stamp',int),('c_gauss',float),('a_gauss',float),
            ('cent_gauss',float),('sigma_gauss',float),
@@ -1261,14 +1270,14 @@ class BSRTprofiles(object):
            ('entropie',float)
            ]
     for plane in ['h','v']:
-      for k in self.profiles_avg_stat[plane].keys():
-        self.profiles_avg_stat[plane][k] = np.array(
-          self.profiles_avg_stat[plane][k], dtype=ftype)
-        self.profiles_mvavg_stat[plane][k] = np.array(
-          self.profiles_mvavg_stat[plane][k], dtype=ftype)
+      for k in self.profiles_norm_avg_stat[plane].keys():
+        self.profiles_norm_avg_stat[plane][k] = np.array(
+          self.profiles_norm_avg_stat[plane][k], dtype=ftype)
+        self.profiles_norm_mvavg_stat[plane][k] = np.array(
+          self.profiles_norm_mvavg_stat[plane][k], dtype=ftype)
     # variable for statistical variable names
-    self.profiles_avg_stat_var = [ ftype[k][0] for k in xrange(len(ftype)) ]
-    self.profiles_mvavg_stat_var = [ ftype[k][0] for k in xrange(len(ftype)) ]
+    self.profiles_norm_avg_stat_var = [ ftype[k][0] for k in xrange(len(ftype)) ]
+    self.profiles_norm_mvavg_stat_var = [ ftype[k][0] for k in xrange(len(ftype)) ]
     return self
   def get_slots(self):
     """
@@ -1386,21 +1395,21 @@ class BSRTprofiles(object):
     get profile data for slot *slot*, time stamp *time_stamp* as
     unix time [ns] and plane *plane*
     """
-    mask = self.profiles_avg_stat[plane][slot]['time_stamp'] == time_stamp
+    mask = self.profiles_norm_avg_stat[plane][slot]['time_stamp'] == time_stamp
     if len(np.where(mask==True)[0]) == 1:
-      return self.profiles_avg_stat[plane][slot][mask][0]
+      return self.profiles_norm_avg_stat[plane][slot][mask][0]
     else:
-      return self.profiles_avg_stat[plane][slot][mask]
+      return self.profiles_norm_avg_stat[plane][slot][mask]
   def get_profile_mvavg_stat(self, slot = None, time_stamp = None, plane = 'h'):
     """
     get profile data for slot *slot*, time stamp *time_stamp* as
     unix time [ns] and plane *plane*
     """
-    mask = self.profiles_mvavg_stat[plane][slot]['time_stamp'] == time_stamp
+    mask = self.profiles_norm_mvavg_stat[plane][slot]['time_stamp'] == time_stamp
     if len(np.where(mask==True)[0]) == 1:
-      return self.profiles_mvavg_stat[plane][slot][mask][0]
+      return self.profiles_norm_mvavg_stat[plane][slot][mask][0]
     else:
-      return self.profiles_mvavg_stat[plane][slot][mask]
+      return self.profiles_norm_mvavg_stat[plane][slot][mask]
   def _plot_profile(self, slot = None, time_stamp = None, plane = 'h',
                     xaxis = 'mm', norm = True, mvavg = False,
                     smooth = 0.025, verbose = False):
@@ -1453,7 +1462,7 @@ class BSRTprofiles(object):
       else:
         profs_avg = self.get_profile_norm_avg(slot=slot,
                           time_stamp=time_stamp,plane=plane)
-      if self.profiles_avg_stat is not None:
+      if self.profiles_norm_avg_stat is not None:
         if mvavg is True:
           stat_aux = self.get_profile_mvavg_stat(slot=slot,
                      time_stamp=time_stamp,plane=plane)
@@ -1513,7 +1522,7 @@ class BSRTprofiles(object):
       # plot average over profiles
       pl.plot(profs_avg['pos']*xscale,profs_avg['amp'],
               label = 'average profile',color='k',linestyle='-')
-      if self.profiles_avg_stat is not None:
+      if self.profiles_norm_avg_stat is not None:
         # plot Gaussian fit
         pl.plot(profs_avg['pos']*xscale,tb.gauss_pdf(profs_avg['pos'],
                 c_gauss,a_gauss,cent_gauss,sigma_gauss),
@@ -1649,7 +1658,7 @@ class BSRTprofiles(object):
       pl.plot(profs_avg['pos']*xscale,(dx*profs_avg['amp']).cumsum(),
             label = 'average profile',color='k',linestyle='-')
       pl.xlabel('position [mm]')
-      if self.profiles_avg_stat is not None:
+      if self.profiles_norm_avg_stat is not None:
         pl.plot(profs_avg['pos']*xscale,(dx*tb.gauss_pdf(profs_avg['pos'],
                 sta['c_gauss'],sta['a_gauss'],sta['cent_gauss'],
                 sta['sigma_gauss'])).cumsum(),
@@ -1733,7 +1742,7 @@ class BSRTprofiles(object):
     if smooth is None:
       smooth = 0
     # get statistical parameters
-    if self.profiles_avg_stat is not None:
+    if self.profiles_norm_avg_stat is not None:
       if mvavg is True:
         sta = self.get_profile_mvavg_stat(slot=slot,
                    time_stamp=time_stamp,plane=plane)
@@ -1859,7 +1868,7 @@ class BSRTprofiles(object):
         check_plot = False
         pass
     if check_plot:
-      if xaxis == 'sigma' and self.profiles_avg_stat is not None:
+      if xaxis == 'sigma' and self.profiles_norm_avg_stat is not None:
         pl.gca().set_xlim(-6,6)
         lbl=(r'position [$\sigma_{\rm{Beam}}$], '+
             r'$\sigma_{\rm{Beam}}$ = %2.2f mm'%sigma_beam)
@@ -2179,7 +2188,7 @@ class BSRTprofiles(object):
     pl.suptitle(r'%s plane, slot %s, $t$=%s, '%(plane.upper(),slot,ts) +
                 r'$t_{\rm ref}$ = %s'%(ts_ref),fontsize=14)
     # rescale position if xaxis=='sigma'
-    if xaxis == 'sigma' and self.profiles_avg_stat is not None:
+    if xaxis == 'sigma' and self.profiles_norm_avg_stat is not None:
       stat_aux = self.get_profile_mvavg_stat(slot=slot,
                  time_stamp=time_stamp,plane=plane)
       sigma_gauss = stat_aux['sigma_gauss']
@@ -2339,3 +2348,65 @@ class BSRTprofiles(object):
     # delete temporary directory
     if (export is False) and (os.path.exists(tmpdir) is True):
       shutil.rmtree(tmpdir)
+  def plot_stats(self,slot,plane='h',t1=None,t2=None,param=None,avgprof=None,
+                mvavg=None,log=False,kwargs=None):
+    """ 
+    plot the statistical parameter *param* for slot *slot* within
+    [t1,t2].
+
+    Parameters:
+    -----------
+    slot: slot number
+    plane: either 'h' or 'v'
+    t1,t2: start/end as unix time [ns], if None plot full range
+    param: parameter to plot, all paramters are list with self.
+    avgprof: if avgprof = 'avg' or None: use statistical paramters
+                 calculated from average profile (self.profiles_avg_stat)
+             if avgprof = 'mvavg': use statistical paramters calculated 
+                 from moving average profiles (self.profiles_mvavg_stat)
+    mvavg: do a moving average over *mvavg* data points, if None do not average
+    log: log scale, in this case the absolute value of the data is plotted
+    kwargs: dictionary of keyword arguments controlling the plot options, see
+              matplotlib.pyplot.plot
+    """
+    # set default values and check parameters
+    if slot not in self.get_slots():
+      print('Slot number %s not found!'%slot)
+      return
+    ts = self.get_timestamps(slot)
+    if t1 is None: t1 = ts[0]
+    if t2 is None: t2 = ts[-1]
+    if avgprof is None: avgprof = 'avg'
+    if avgprof == 'avg':
+      if param not in self.profiles_norm_avg_stat_var:
+        print('ERROR: Give statistical parameter to plot, options are:')
+        print self.profiles_norm_avg_stat_var
+        return
+    elif avgprof == 'mvavg':
+      if param not in self.profiles_norm_mvavg_stat_var:
+        print('ERROR: Give statistical parameter to plot, options are:')
+        print self.profiles_norm_mvavg_stat_var
+        return
+    else:
+      print("ERROR: avgprof must be None,'avg' or 'mvavg'!")
+      return
+    # get data
+    if avgprof == 'avg':
+      profs_aux = self.profiles_norm_avg_stat['h'][300]
+    elif avgprof == 'mvavg':
+      profs_aux = self.profiles_norm_mvavg_stat['h'][300]
+    mask = np.logical_and(profs_aux['time_stamp'] >= t1,
+                                profs_aux['time_stamp'] <= t2)
+    time_stamps = tb.movingaverage(profs_aux['time_stamp'][mask],navg=mvavg)
+    if log:
+      data = np.abs(tb.movingaverage(profs_aux[param][mask],navg=mvavg))
+    else:
+      data = tb.movingaverage(profs_aux[param][mask],navg=mvavg)
+    if kwargs is None:
+      pl.plot(time_stamps*1.e-9,data)
+    else:
+      pl.plot(time_stamps*1.e-9,data,**kwargs)
+    pytimber.set_xaxis_date()
+    pl.grid(b=True)
+    pl.ylabel(param)
+    if log: pl.yscale('log')
