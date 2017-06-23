@@ -57,15 +57,12 @@ def qgauss_pdf(x,c,a,q,mu,beta):
     if 1.01 < q and q < 3:
       c_q = ( ( np.sqrt(np.pi)*gamma((3-q)/(2*(q-1))) ) / 
               (np.sqrt(q-1)*gamma(1/(q-1))) )
-#      print(c,a,q,mu,beta)
       y=c+a*(np.sqrt(beta)/c_q)*( (1-beta*(1-q)*(x-mu)**2)**(1/(1-q)) )
     elif 0 < q < 0.99:
       c_q = ( ( 2*np.sqrt(np.pi)*gamma(1/(1-q)) ) / 
               ( (3-q)*np.sqrt(1-q)*gamma((3-q)/(2*(1-q))) ) )
-#      print(c,a,q,mu,beta)
       y=c+a*(np.sqrt(beta)/c_q)*( (1-beta*(1-q)*(x-mu)**2)**(1/(1-q)) )
     elif q >= 0.99 and q <= 1.01:
-#      print(c,a,q,mu,beta)
       y=gauss_pdf(x,c,a,mu,np.sqrt(1/(beta*(5-3*q))))
 #    if np.isnan(y).any() or np.isinf(y).any():
 #      print y[0:10]

@@ -160,16 +160,23 @@ class BSRTprofiles(object):
     self.profiles_norm_mvavg = profiles_norm_avg
     self.profiles_norm_avg_stat = profiles_norm_avg_stat
     self.profiles_norm_mvavg_stat = profiles_norm_avg_stat
-    if self.profiles_norm_avg_stat is None:
+    if self.profiles_norm_avg_stat is None or self.profiles_norm_mvavg_stat is None:
       self.profiles_norm_avg_stat_var = None
-    if self.profiles_norm_mvavg_stat is None:
       self.profiles_norm_mvavg_stat_var = None
+      # index for covariance matrix for Gaussian and q-Gaussian fit 
+      self.fit_var_gauss = None
+      self.fit_var_qgauss = None
     else:
       # take first plane and slot in order to get profile_stat named fields
       plane_aux = self.profiles_norm_avg_stat.keys()[0]
       slot_aux = self.profiles_norm_avg_stat[plane_aux].keys()[0] 
       self.profiles_norm_avg_stat_var = self.profiles_norm_avg_stat[plane_aux][slot_aux].dtype.names
       self.profiles_norm_mvavg_stat_var = self.profiles_norm_mvavg_stat[plane_aux][slot_aux].dtype.names
+      # index for covariance matrix for Gaussian and q-Gaussian fit 
+      # c,a,mu,sig
+      self.fit_var_gauss = {0:'c',1:'a',2:'mu',3:'sig'}
+      # c,a,q,mu,beta
+      self.fit_var_qgauss = {0:'c',1:'a',2:'q',3:'mu',4:'beta'}
     # -- background estimate
     # internal flag to check if background has been removed
     self._rm_bg = False
@@ -1076,7 +1083,7 @@ class BSRTprofiles(object):
               # h) calculate xi-squared
               # - estimate noise by the standard deviation in each bin
               #   over self.nmvavg measurements.
-              # - normalize by the nbins - nparam -> xisq_g in [0,1]
+              # - normalize by the nbins - nparam -> xisq_qg in [0,1]
               xisq_qg = (((pna['amp']-profs_norm_qgauss)/
                        pna['ampstd'])**2).sum()
               # nparam = 4 for Gaussian distribution
@@ -1493,7 +1500,7 @@ class BSRTprofiles(object):
                 color=profile_colors.values()[i])
         if norm:
           pl.ylabel(r'probability (integral normalized to 1) [a.u.]')
-          pl.ylim(5.e-5,0.5)
+          pl.ylim(1.e-3,0.5)
         else:
           pl.ylabel('intensity [a.u.]')
         pl.xlabel('position [mm]')
@@ -1623,12 +1630,12 @@ class BSRTprofiles(object):
     if mvavg is True:
       profs_avg = self.get_profile_norm_mvavg(slot=slot,
                        time_stamp=time_stamp,plane=plane)
-      sta = self.get_profile_avg_stat(slot=slot,
+      sta = self.get_profile_mvavg_stat(slot=slot,
                    time_stamp=time_stamp,plane=plane)
     else:
       profs_avg = self.get_profile_norm_avg(slot=slot,
                        time_stamp=time_stamp,plane=plane)
-      sta = self.get_profile_mvavg_stat(slot=slot,
+      sta = self.get_profile_avg_stat(slot=slot,
                    time_stamp=time_stamp,plane=plane)
     if xaxis == 'sigma' and sta is not None:
       sigma_beam  = self.sigma_prof_to_sigma_beam(
@@ -1654,7 +1661,7 @@ class BSRTprofiles(object):
         pass
     # average profile
     if check_plot:
-      dx = profs[i]['pos'][1]-profs[i]['pos'][0]
+      dx = profs_avg['pos'][1]-profs_avg['pos'][0]
       pl.plot(profs_avg['pos']*xscale,(dx*profs_avg['amp']).cumsum(),
             label = 'average profile',color='k',linestyle='-')
       pl.xlabel('position [mm]')
@@ -1727,6 +1734,7 @@ class BSRTprofiles(object):
     check_plot : bool, flag if profile plot failed 
                  (used for mk_profile_video)
     """
+    xscale = 1 #scaling for mm or sigma for x-axis, is reset in case of sigma
     # initialize for default values = None
     if slot_ref is None:
       slot_ref = slot
@@ -2348,8 +2356,8 @@ class BSRTprofiles(object):
     # delete temporary directory
     if (export is False) and (os.path.exists(tmpdir) is True):
       shutil.rmtree(tmpdir)
-  def plot_stats(self,slot,plane='h',t1=None,t2=None,param=None,avgprof=None,
-                mvavg=None,log=False,kwargs=None):
+  def plot_stats(self,slot,plane='h',t1=None,t2=None,param=None,paramidx=None,
+                 avgprof=None,mvavg=None,log=False,kwargs=None):
     """ 
     plot the statistical parameter *param* for slot *slot* within
     [t1,t2].
@@ -2360,6 +2368,8 @@ class BSRTprofiles(object):
     plane: either 'h' or 'v'
     t1,t2: start/end as unix time [ns], if None plot full range
     param: parameter to plot, all paramters are list with self.
+    paramidx: for the covariance and correlation matrix also the indices
+              of the matrix have to be specified as a tuple (i,j).
     avgprof: if avgprof = 'avg' or None: use statistical paramters
                  calculated from average profile (self.profiles_avg_stat)
              if avgprof = 'mvavg': use statistical paramters calculated 
@@ -2390,18 +2400,31 @@ class BSRTprofiles(object):
     else:
       print("ERROR: avgprof must be None,'avg' or 'mvavg'!")
       return
+    # c,a,mu,sig
+    self.fit_var_gauss = {0:'c',1:'a',2:'mu',3:'sig'}
+    # c,a,q,mu,beta
+    self.fit_var_qgauss = {0:'c',1:'a',2:'q',3:'mu',4:'beta'}
+    print 
+    if ('pcov' in param) or ('pcorr' in param) and paramidx == None:
+      print('ERROR: Please specify indices of matrix in paramidx!')
+      print('for Gaussian:');print(self.fit_var_gauss)
+      print('for qGaussian:');print(self.fit_var_qgauss)
+      return
     # get data
     if avgprof == 'avg':
-      profs_aux = self.profiles_norm_avg_stat['h'][300]
+      profs_aux = self.profiles_norm_avg_stat[plane][slot]
     elif avgprof == 'mvavg':
-      profs_aux = self.profiles_norm_mvavg_stat['h'][300]
+      profs_aux = self.profiles_norm_mvavg_stat[plane][slot]
     mask = np.logical_and(profs_aux['time_stamp'] >= t1,
                                 profs_aux['time_stamp'] <= t2)
     time_stamps = tb.movingaverage(profs_aux['time_stamp'][mask],navg=mvavg)
-    if log:
-      data = np.abs(tb.movingaverage(profs_aux[param][mask],navg=mvavg))
+    if 'pcov' in param or 'pcorr' in param:
+      data = tb.movingaverage(
+                profs_aux[param][mask][:,paramidx[0],paramidx[1]],navg=mvavg)
     else:
       data = tb.movingaverage(profs_aux[param][mask],navg=mvavg)
+    if log:
+      data = np.abs(data)
     if kwargs is None:
       pl.plot(time_stamps*1.e-9,data)
     else:
@@ -2409,4 +2432,5 @@ class BSRTprofiles(object):
     pytimber.set_xaxis_date()
     pl.grid(b=True)
     pl.ylabel(param)
+    pl.legend(loc='best')
     if log: pl.yscale('log')
