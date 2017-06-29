@@ -896,7 +896,7 @@ class BSRTprofiles(object):
       self.profiles_norm_avg_stat={}
       self.profiles_norm_avg_stat['h']={}
       self.profiles_norm_avg_stat['v']={}
-    if self.profiles_norm_mvavg_stat is None:
+    if self.profiles_norm_mvavg_stat is None and self.nmvavg is not None:
       self.profiles_norm_mvavg_stat={}
       self.profiles_norm_mvavg_stat['h']={}
       self.profiles_norm_mvavg_stat['v']={}
@@ -929,7 +929,8 @@ class BSRTprofiles(object):
         # 2) calculate/recalculate statistical parameters
         # initialize/delete old data
         self.profiles_norm_avg_stat[plane][slot] = []
-        self.profiles_norm_mvavg_stat[plane][slot] = []
+        if self.nmvavg is not None:
+          self.profiles_norm_mvavg_stat[plane][slot] = []
         for time_stamp in self.get_timestamps(slot=slot,plane=plane):
           # 1) estimate centroid with three different methods:
           # 1a) Gaussian fit (cent_gauss)
@@ -962,10 +963,15 @@ class BSRTprofiles(object):
           profs_norm_avg = self.get_profile_norm_avg(slot=slot,                  
                              time_stamp=time_stamp, plane=plane)
           # moving average profile
-          profs_norm_mvavg = self.get_profile_norm_mvavg(slot=slot,                  
+          if self.nmvavg is not None:
+            profs_norm_mvavg = self.get_profile_norm_mvavg(slot=slot,                  
                              time_stamp=time_stamp, plane=plane)
+          else:
+            profs_norm_mvavg = None
           for pna,avgflag in zip([profs_norm_avg,profs_norm_mvavg],
                                  ['avg','mvavg']):
+            if avgflag == 'mvavg' and self.nmvavg is None:
+              break
             # a) Gaussian fit
             # assume initial values of
             # c=0,a=1,mu=0,sig=2
@@ -1247,7 +1253,7 @@ class BSRTprofiles(object):
                 )
             if avgflag == 'avg': 
               self.profiles_norm_avg_stat[plane][slot].append(data)
-            if avgflag == 'mvavg': 
+            if avgflag == 'mvavg' and self.nmvavg is not None: 
               self.profiles_norm_mvavg_stat[plane][slot].append(data)
     # convert to a structured array
     ftype=[('time_stamp',int),('c_gauss',float),('a_gauss',float),
@@ -1280,11 +1286,15 @@ class BSRTprofiles(object):
       for k in self.profiles_norm_avg_stat[plane].keys():
         self.profiles_norm_avg_stat[plane][k] = np.array(
           self.profiles_norm_avg_stat[plane][k], dtype=ftype)
-        self.profiles_norm_mvavg_stat[plane][k] = np.array(
-          self.profiles_norm_mvavg_stat[plane][k], dtype=ftype)
     # variable for statistical variable names
     self.profiles_norm_avg_stat_var = [ ftype[k][0] for k in xrange(len(ftype)) ]
-    self.profiles_norm_mvavg_stat_var = [ ftype[k][0] for k in xrange(len(ftype)) ]
+    if self.nmvavg is not None:
+      for plane in ['h','v']:
+        for k in self.profiles_norm_avg_stat[plane].keys():
+          self.profiles_norm_mvavg_stat[plane][k] = np.array(
+            self.profiles_norm_mvavg_stat[plane][k], dtype=ftype)
+    # variable for statistical variable names
+      self.profiles_norm_mvavg_stat_var = [ ftype[k][0] for k in xrange(len(ftype)) ]
     return self
   def get_slots(self):
     """
@@ -1373,7 +1383,7 @@ class BSRTprofiles(object):
       mask = (self.profiles_norm_avg[plane][slot]['time_stamp'] 
                 == time_stamp)
     except TypeError:
-      print('Data could not be extracted! Have you run ' +
+      print('in get_profile_norm_avg: Data could not be extracted! Have you run ' +
             'self.norm() to normalize profiles?')
       return
     if len(np.where(mask==True)[0]) == 1:
@@ -1390,7 +1400,7 @@ class BSRTprofiles(object):
       mask = (self.profiles_norm_mvavg[plane][slot]['time_stamp'] 
                 == time_stamp)
     except TypeError:
-      print('Data could not be extracted! Have you run ' +
+      print('in get_profile_norm_mvavg: Data could not be extracted! Have you run ' +
             'self.norm() to normalize profiles?')
       return
     if len(np.where(mask==True)[0]) == 1:
@@ -1500,7 +1510,7 @@ class BSRTprofiles(object):
                 color=profile_colors.values()[i])
         if norm:
           pl.ylabel(r'probability (integral normalized to 1) [a.u.]')
-          pl.ylim(1.e-3,0.5)
+          pl.ylim(1.e-3,1.0)
         else:
           pl.ylabel('intensity [a.u.]')
         pl.xlabel('position [mm]')
@@ -1999,7 +2009,7 @@ class BSRTprofiles(object):
       pl.gca().legend(bbox_to_anchor=(0., 1.02, 1., .102), loc=3,
                     ncol=2, mode="expand", borderaxespad=0.,
                     fontsize=10)
-    pl.subplots_adjust(hspace=5,wspace=0.1,top=0.8)
+    pl.subplots_adjust(hspace=18,wspace=0.1,top=0.75)
     pl.tight_layout()
     return flaux
   def mk_profile_video(self, slots = None, t1=None, t2=None,
