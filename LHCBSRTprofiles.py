@@ -146,7 +146,7 @@ class BSRTprofiles(object):
                records=None, profiles=None, profiles_norm=None,
                profiles_norm_avg=None, profiles_norm_mvavg=None, 
                profiles_norm_avg_stat=None, profiles_norm_mvavg_stat=None,
-               bgnavg = None, nmvavg = None):
+               split='full',bgnavg = None, nmvavg = None):
     self.beam = beam
     self.db = db
     self.records   = records
@@ -177,6 +177,8 @@ class BSRTprofiles(object):
       self.fit_var_gauss = {0:'c',1:'a',2:'mu',3:'sig'}
       # c,a,q,mu,beta
       self.fit_var_qgauss = {0:'c',1:'a',2:'q',3:'mu',4:'beta'}
+    # -- take full, left or right side of profile
+    self.split = split
     # -- background estimate
     # internal flag to check if background has been removed
     self._rm_bg = False
@@ -509,9 +511,6 @@ class BSRTprofiles(object):
     if nmvavg is not None:
       if nmvavg % 2 != 0:
          raise ValueError('nmvavg must be None or an even integer!')
-    # generate normalized profiles if missing
-    if self.profiles_norm is None:
-      self = self._norm_profiles(verbose=verbose)
     # abbreviate profs_norm_avg with pna
     pna = {}
     for plane in 'h','v':
@@ -580,8 +579,40 @@ class BSRTprofiles(object):
               if (np.abs(profs[0]['pos']-profs[i]['pos'])).sum() != 0:
                 check_x +=1
             if check_x == 0:
-              # 2) take the average. Integral is normalized to 1
-              #    -> to normalize avg divide by number of profiles
+              # 2) if only left/right profile is taken we need to find
+              # the peak, mirror left/right profile, renormalize
+              if self.split == 'left' or self.split == 'right':
+                # find peak using average profile
+                pos,amp = profs[0]['pos'],profs['amp'].mean(axis=0)
+                di = 30 
+                ilim=[len(pos)/2-di,len(pos)/2+di] # take central region
+                x,y=pos[ilim[0]:ilim[1]],amp[ilim[0]:ilim[1]]
+                popt, pcov = curve_fit(f=tb.gauss_pdf, xdata=x, ydata=y,
+                               p0=[0,1,0,2],bounds=([-0.1,0,-8,0],[0.1,2,8,16]))
+                imax = np.argmax(tb.gauss_pdf(x,*popt))+ilim[0]
+                # mirror profile
+                for i in xrange(len(profs)):
+                  if self.split == 'left':
+                    profs['pos'][i] = np.concatenate((profs['pos'][i][:imax+1],
+                      2*profs['pos'][i][imax]-profs['pos'][i][:imax][::-1]),axis=0)
+                    profs['amp'][i] = np.concatenate((profs['amp'][i][:imax+1],
+                      profs['amp'][i][:imax][::-1]),axis=0)
+                  if self.split == 'right':
+                    profs['pos'][i] = np.concatenate(
+                      (2*profs['pos'][i][imax]-profs['pos'][i][imax+1:][::-1],
+                      profs['pos'][i][imax:]),axis=0)
+                    profs['amp'][i] = np.concatenate(
+                      (profs['amp'][i][imax+1:][::-1],profs['amp'][i][imax:]),axis=0)
+                  dx = profs['pos'][i][1]-profs['pos'][i][0]
+                  prof_int = (dx*profs['amp'][i]).sum()
+                  profs['amp'][i] = profs['amp'][i]/prof_int
+            # recheck position
+            check_x = 0
+            for i in xrange(len(profs)):
+              if (np.abs(profs[0]['pos']-profs[i]['pos'])).sum() != 0:
+                check_x +=1
+            if check_x == 0:
+              # take the average. Integral is normalized to 1
               pos = profs[0]['pos']
               # mean amplitude of bin
               amp = profs['amp'].mean(axis=0)
@@ -601,7 +632,7 @@ class BSRTprofiles(object):
       for k in pna[plane].keys():
         pna[plane][k] = np.array(pna[plane][k], dtype=ftype)
     return pna
-  def norm(self, nmvavg = 10, verbose = False):
+  def norm(self, nmvavg = 10, split = 'full', verbose = False):
     """
     Generate normalized and average of normalized profiles for each
     plane, slot and timestamp. Profiles are normalized to represent a 
@@ -620,6 +651,12 @@ class BSRTprofiles(object):
                   previous/following nmvavg profiles (-> in total
                   nmvavg + 1 profiles)
                 Note: nmvavg must be an even number!
+    split: take only half of the profile - needed at top energy
+           where profiles are diffraction limited. The profile is split by
+           detecting the peak and then mirroring it on the other side.
+           'left': take left profile
+           'right': take right profile
+           'full': (default) take full profile
     verbose : verbose option for additional output
 
     Returns:
@@ -634,6 +671,7 @@ class BSRTprofiles(object):
     -----
     profile data is assumed to be equally spaced in x
     """
+    self.split = split
     # self.profiles_norm
     self._norm_profiles(verbose=verbose)
     # self.profiles_norm_avg
