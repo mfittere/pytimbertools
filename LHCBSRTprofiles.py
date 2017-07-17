@@ -515,13 +515,15 @@ class BSRTprofiles(object):
     pna = {}
     for plane in 'h','v':
       pna[plane]={}
-      for slot in self.profiles_norm[plane].keys():
+      for slot in [0]:#self.profiles_norm[plane].keys():
         pna[plane][slot]=[]
         ts = self.get_timestamps(slot=slot,plane=plane)
         # check that there are enough time stamps for nmvavg
         if (nmvavg is not None) and (nmvavg + 1 > len(ts)):
-          raise ValueError('not enought profiles for nmvavg = %s'%nmvavg)
+          raise ValueError('not enough profiles for nmvavg = %s'%nmvavg)
+#        for time_stamp,ts_idx in zip(ts[132:140],xrange(len(ts[132:140]))):
         for time_stamp,ts_idx in zip(ts,xrange(len(ts))):
+          print plane,slot,time_stamp
           # a) nmvavg = None: average over all profiles with the same
           #    time stamp -> time_stamp already correctly set
           if nmvavg is None: 
@@ -551,33 +553,29 @@ class BSRTprofiles(object):
           # more than one profile
           elif len(profs) > 1:
             # take the average over the profiles
-            # 1) get the profile with the minimum length
-            l_profs = np.array([ len(profs[i]['pos']) 
-                          for i in xrange(len(profs)) ])
-            idx_lmin_prof = np.argmin(l_profs)
-            lmin_prof = np.min(l_profs)
-            # 2) shorten all profiles to the minimum length if they do
+            # 1) shorten all profiles to the minimum length if they do
             #    not already have the same length
-            if np.any(l_profs != lmin_prof):
-              if verbose:
-                print('WARNING: profiles for slot %s '%slot +
-                      'and time stamp %s '%time_stamp +
-                      'have different length! Shortening all profiles '
-                      'to minimum length %s'%lmin_prof)
-              xmin = (profs[idx_lmin_prof]['pos']).min()
-              xmax = (profs[idx_lmin_prof]['pos']).max()
-              for i in xrange(len(profs)):
-                mask = np.logical_and(profs[i]['pos'] >= xmin,
-                                      profs[i]['pos'] <= xmax)
-                profs[i]['pos'] = profs[i]['pos'][mask]
-                profs[i]['amp'] = profs[i]['amp'][mask]
-            # 3) check that x-axis of all profiles are the same
+            if verbose:
+              print('Shortening profiles for slot %s '%slot +
+                    'plane %s and time stamp %s!'%(plane,time_stamp))
+            xmin = np.max([np.min(n) for n in profs['pos']])
+            xmax = np.min([np.max(n) for n in profs['pos']])
+            for i in xrange(len(profs)):
+              mask = np.logical_and(profs[i]['pos'] >= xmin,
+                                    profs[i]['pos'] <= xmax)
+              profs[i]['pos'] = profs[i]['pos'][mask]
+              profs[i]['amp'] = profs[i]['amp'][mask]
+            # 2) check that x-axis of all profiles are the same
             #    check_x = 0 if x-axis of profiles are the same
             #    check_x > 0 if x-axis differ
             check_x = 0
             for i in xrange(len(profs)):
-              if (np.abs(profs[0]['pos']-profs[i]['pos'])).sum() != 0:
-                check_x +=1
+              try:
+                if (np.abs(profs[0]['pos']-profs[i]['pos'])).sum() != 0:
+                  check_x +=1
+              except ValueError:
+                print 'failed',plane,slot,ts_profs,i,len(profs[0]['pos']),len(profs[i]['pos'])
+                return
             if check_x == 0:
               # 2) if only left/right profile is taken we need to find
               # the peak, mirror left/right profile, renormalize
