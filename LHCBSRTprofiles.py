@@ -566,14 +566,17 @@ class BSRTprofiles(object):
             xmax = np.min([np.max(n) for n in profs['pos']])
             # assume equal bin size
             dbin = profs[0]['pos'][1]-profs[0]['pos'][0]
-            bin_edges = [profs[0]['pos'][0]-dbin/2]+list(profs[0]['pos']+dbin/2)
+            mask = np.logical_and(profs[0]['pos'] >= xmin,
+                                  profs[0]['pos'] <= xmax)
+            bin_edges = [profs[0]['pos'][0]-dbin/2]+list(profs[0]['pos'][mask]+dbin/2)
             for i in xrange(len(profs)):
               mask = np.logical_and(profs[i]['pos'] >= xmin,
                                     profs[i]['pos'] <= xmax)
               profs[i]['pos'] = profs[i]['pos'][mask]
               profs[i]['amp'] = profs[i]['amp'][mask]
+              dbin_i = profs[i]['pos'][1]-profs[i]['pos'][0]
               # rebin to binning of first profile
-              if (np.abs(profs[0]['pos']-profs[i]['pos'])).sum() != 0:
+              if dbin != dbin_i:
                 h = np.histogram(a=profs[i]['pos'],bins = bin_edges,
                                  normed = True,weights = profs[i]['amp'])
                 profs[i]['pos'] = profs[0]['pos']
@@ -583,16 +586,9 @@ class BSRTprofiles(object):
             #    check_x > 0 if x-axis differ
             check_x = 0
             for i in xrange(len(profs)):
-              try:
-                if (np.abs(profs[0]['pos']-profs[i]['pos'])).sum() != 0:
-                  check_x +=1
-              except ValueError:
-                print('ERROR: Profiles do not have the same binning'+
-                      '- rebinning failed!\n'+
-                      'plane =%s, slot = %s, ts ='%(plane,slot)+ts_profs+
-                      'profile %s, len(prof(0)) = %s,'%(i,len(profs[0]['pos']))+
-                      'len(profs(%s)) = %s'%(i,len(profs[i]['pos'])))
-                return
+              if ((len(profs[0]['pos'])-len(profs[i]['pos']) !=0)
+                 or (len(profs[0]['amp'])-len(profs[i]['amp']) !=0)):
+                check_x +=1
             if check_x == 0:
               # 2) if only left/right profile is taken we need to find
               # the peak, mirror left/right profile, renormalize
@@ -975,10 +971,6 @@ class BSRTprofiles(object):
       for slot in self._set_slots(plane=plane,slots=slots):
         if verbose:
           print('... start slot %s'%slot)
-        # 1) data is already calculated + force = False-> go to next slot
-        if ((slot in self.profiles_norm_avg_stat[plane].keys()) and 
-            (slot in self.profiles_norm_mvavg_stat[plane].keys()) and (force is False)):
-          continue
         # 2) calculate/recalculate statistical parameters
         # initialize/delete old data
         self.profiles_norm_avg_stat[plane][slot] = []
@@ -1025,6 +1017,15 @@ class BSRTprofiles(object):
                                  ['avg','mvavg']):
             if avgflag == 'mvavg' and self.nmvavg is None:
               break
+            # 1) data is already calculated + force = False-> go to next slot
+            if ((avgflag == 'avg') and 
+                (slot in self.profiles_norm_avg_stat[plane].keys()) and 
+                (force is False)):
+              continue
+            if ((avgflag == 'mvavg') and 
+                (slot in self.profiles_norm_mvavg_stat[plane].keys()) and 
+                (force is False)):
+              continue
             # a) Gaussian fit
             # assume initial values of
             # c=0,a=1,mu=0,sig=2
@@ -1376,8 +1377,9 @@ class BSRTprofiles(object):
     lmin,lmax = [[],[]]
     for pl in self.profiles.keys():
       for sl in self.profiles[pl].keys():
-        lmin.append((self.profiles[pl][sl]['time_stamp']).min())
-        lmax.append((self.profiles[pl][sl]['time_stamp']).max())
+        if len(self.profiles[pl][sl]['time_stamp']) != 0:
+            lmin.append((self.profiles[pl][sl]['time_stamp']).min())
+            lmax.append((self.profiles[pl][sl]['time_stamp']).max())
     return (np.min(lmin),np.max(lmax))
   def get_profile(self, slot = None, time_stamp = None, plane = 'h'):
     """
