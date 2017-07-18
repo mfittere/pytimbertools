@@ -514,16 +514,20 @@ class BSRTprofiles(object):
     # abbreviate profs_norm_avg with pna
     pna = {}
     for plane in 'h','v':
+      if verbose:
+        print('... start plane = %s'%plane)
       pna[plane]={}
-      for slot in [0]:#self.profiles_norm[plane].keys():
+      for slot in self.profiles_norm[plane].keys():
+        if verbose:
+          print('... normalizing slot = %s'%slot)
         pna[plane][slot]=[]
         ts = self.get_timestamps(slot=slot,plane=plane)
         # check that there are enough time stamps for nmvavg
         if (nmvavg is not None) and (nmvavg + 1 > len(ts)):
-          raise ValueError('not enough profiles for nmvavg = %s'%nmvavg)
-#        for time_stamp,ts_idx in zip(ts[132:140],xrange(len(ts[132:140]))):
+          print('ERROR: not enough profiles for nmvavg = %s!'%nmvavg
+          +'slot = %s, plane = %s'%(slot,plane))
+          continue
         for time_stamp,ts_idx in zip(ts,xrange(len(ts))):
-          print plane,slot,time_stamp
           # a) nmvavg = None: average over all profiles with the same
           #    time stamp -> time_stamp already correctly set
           if nmvavg is None: 
@@ -553,18 +557,27 @@ class BSRTprofiles(object):
           # more than one profile
           elif len(profs) > 1:
             # take the average over the profiles
-            # 1) shorten all profiles to the minimum length if they do
-            #    not already have the same length
-            if verbose:
-              print('Shortening profiles for slot %s '%slot +
-                    'plane %s and time stamp %s!'%(plane,time_stamp))
+            # 1) a) shorten all profiles to the minimum length if they do
+            #       not already have the same length
+            #    b) rebin to binning of first profile (note sometimes
+            #       two values fall in the same bin -> peaks in 
+            #       distribution)
             xmin = np.max([np.min(n) for n in profs['pos']])
             xmax = np.min([np.max(n) for n in profs['pos']])
+            # assume equal bin size
+            dbin = profs[0]['pos'][1]-profs[0]['pos'][0]
+            bin_edges = [profs[0]['pos'][0]-dbin/2]+list(profs[0]['pos']+dbin/2)
             for i in xrange(len(profs)):
               mask = np.logical_and(profs[i]['pos'] >= xmin,
                                     profs[i]['pos'] <= xmax)
               profs[i]['pos'] = profs[i]['pos'][mask]
               profs[i]['amp'] = profs[i]['amp'][mask]
+              # rebin to binning of first profile
+              if (np.abs(profs[0]['pos']-profs[i]['pos'])).sum() != 0:
+                h = np.histogram(a=profs[i]['pos'],bins = bin_edges,
+                                 normed = True,weights = profs[i]['amp'])
+                profs[i]['pos'] = profs[0]['pos']
+                profs[i]['amp'] = h[0] 
             # 2) check that x-axis of all profiles are the same
             #    check_x = 0 if x-axis of profiles are the same
             #    check_x > 0 if x-axis differ
@@ -574,7 +587,11 @@ class BSRTprofiles(object):
                 if (np.abs(profs[0]['pos']-profs[i]['pos'])).sum() != 0:
                   check_x +=1
               except ValueError:
-                print 'failed',plane,slot,ts_profs,i,len(profs[0]['pos']),len(profs[i]['pos'])
+                print('ERROR: Profiles do not have the same binning'+
+                      '- rebinning failed!\n'+
+                      'plane =%s, slot = %s, ts ='%(plane,slot)+ts_profs+
+                      'profile %s, len(prof(0)) = %s,'%(i,len(profs[0]['pos']))+
+                      'len(profs(%s)) = %s'%(i,len(profs[i]['pos'])))
                 return
             if check_x == 0:
               # 2) if only left/right profile is taken we need to find
@@ -582,7 +599,7 @@ class BSRTprofiles(object):
               if self.split == 'left' or self.split == 'right':
                 # find peak using average profile
                 pos,amp = profs[0]['pos'],profs['amp'].mean(axis=0)
-                di = 30 
+                di = 40 
                 ilim=[len(pos)/2-di,len(pos)/2+di] # take central region
                 x,y=pos[ilim[0]:ilim[1]],amp[ilim[0]:ilim[1]]
                 popt, pcov = curve_fit(f=tb.gauss_pdf, xdata=x, ydata=y,
@@ -910,7 +927,7 @@ class BSRTprofiles(object):
         print('ERROR: Trying to use db = pytimber.LoggingDB(), but ' +
               'pytimber is not imported! You can use ' +
               'pagestore database instead for offline analysis!')
-        return
+#        return
     else:
       self.db = db
     if self.bgnavg is not None and verbose:
