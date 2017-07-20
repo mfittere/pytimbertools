@@ -7,9 +7,11 @@ try:
   from scipy.optimize import curve_fit
   from scipy.special import erf
   from statsmodels.nonparametric.smoothers_lowess import lowess
+  import cPickle
+  import glob
 except ImportError:
-  print('No module found: numpy, matplotlib, scipy modules and ' +
-        'statsmodels should be present to run pytimbertools')
+  print('No module found: numpy, matplotlib, scipy, cPickle, glob and' +
+        ' statsmodels module should be present to run pytimbertools')
 
 try:
   import pytimber
@@ -368,7 +370,7 @@ class BSRTprofiles(object):
                           rm_ts,invert=True)
         self.profiles[plane][slot] = self.profiles[plane][slot][rm_mask]
     return self
-  def _norm_profiles(self,verbose = True):
+  def _norm_profiles(self,slot=None,verbose = True):
     """
     Generate normalized profiles for each plane, slot and timestamp. 
     Profiles are normalized to represent a probability distribution, 
@@ -381,6 +383,7 @@ class BSRTprofiles(object):
 
     Parameters:
     -----------
+    slot: slot number, list of slots or if slot = None takes all slots
     verbose : verbose option for additional output
 
     Returns:
@@ -401,7 +404,7 @@ class BSRTprofiles(object):
             ' in self.profiles_norm')
     for plane in 'h','v':
       self.profiles_norm[plane]={}
-      for slot in self.profiles[plane].keys():
+      for slot in self._set_slots(plane=plane,slot=slot):
         self.profiles_norm[plane][slot] = []
         for idx in xrange(len(self.profiles[plane][slot])):
           try:
@@ -421,7 +424,7 @@ class BSRTprofiles(object):
         self.profiles_norm[plane][k] = np.array(
             self.profiles_norm[plane][k], dtype=ftype)
     return self
-  def _norm_mvavg_profiles(self,verbose = True):
+  def _norm_mvavg_profiles(self,slot=None,verbose = True):
     """
     Generate moving average over self.nmvavg+1 timestamps of normalized 
     profiles for each plane, slot and timestamp. The moving average is 
@@ -429,6 +432,7 @@ class BSRTprofiles(object):
 
     Parameters:
     -----------
+    slot: slot number, list of slots or if slot = None takes all slots
     verbose : verbose option for additional output
 
     Returns:
@@ -448,9 +452,9 @@ class BSRTprofiles(object):
             'normalized profiles. Averaged normalized profiles are' +
             ' saved in self.profiles_norm_mvavg')
     self.profiles_norm_mvavg = self._get_norm_avg_mvavg_profiles(
-                                 nmvavg = self.nmvavg,verbose=verbose)
+                                 slot=slot,nmvavg = self.nmvavg,verbose=verbose)
     return self
-  def _norm_avg_profiles(self,verbose = True):
+  def _norm_avg_profiles(self,slot=None,verbose = True):
     """
     Generate average of normalized profiles for each
     plane, slot and timestamp. The average is taken over all profiles 
@@ -459,6 +463,7 @@ class BSRTprofiles(object):
 
     Parameters:
     -----------
+    slot: slot number, list of slots or if slot = None takes all slots
     verbose : verbose option for additional output
 
     Returns:
@@ -477,9 +482,10 @@ class BSRTprofiles(object):
       print('... average normalized profiles. Averaged normalized ' +
             'profiles are saved in self.profiles_norm_avg')
     self.profiles_norm_avg = self._get_norm_avg_mvavg_profiles(
-                                 nmvavg = None,verbose=verbose)
+                             slot=slot,nmvavg = None,verbose=verbose)
     return self
-  def _get_norm_avg_mvavg_profiles(self, nmvavg = None, verbose = True):
+  def _get_norm_avg_mvavg_profiles(self, slot=None,nmvavg = None, 
+                                   verbose = True):
     """
     function to calculate average over all profiles with the same 
     timestamp (nmvavg = None) or moving average over nmvavg time stamps
@@ -487,6 +493,7 @@ class BSRTprofiles(object):
     
     Parameters:
     -----------
+    slot: slot number, list of slots or if slot = None takes all slots
     nmvavg: a) nmvavg = None:
                calculate the average over all profiles with the same
                time stamp
@@ -517,7 +524,7 @@ class BSRTprofiles(object):
       if verbose:
         print('... start plane = %s'%plane)
       pna[plane]={}
-      for slot in self.profiles_norm[plane].keys():
+      for slot in self._set_slots(plane=plane,slot=slot):
         if verbose:
           print('... normalizing slot = %s'%slot)
         pna[plane][slot]=[]
@@ -643,7 +650,7 @@ class BSRTprofiles(object):
       for k in pna[plane].keys():
         pna[plane][k] = np.array(pna[plane][k], dtype=ftype)
     return pna
-  def norm(self, nmvavg = 10, split = 'full', verbose = False):
+  def norm(self, slot = None, nmvavg = 10, split = 'full', verbose = False):
     """
     Generate normalized and average of normalized profiles for each
     plane, slot and timestamp. Profiles are normalized to represent a 
@@ -656,6 +663,7 @@ class BSRTprofiles(object):
 
     Parameters:
     -----------
+    slot: slot number, list of slots or if slot = None takes all slots
     nmvavg : number of timestamps used for:
                 - moving average over profiles
                 - estimate of noise for each bin for profiles i = std over
@@ -684,16 +692,16 @@ class BSRTprofiles(object):
     """
     self.split = split
     # self.profiles_norm
-    self._norm_profiles(verbose=verbose)
+    self._norm_profiles(slot=slot,verbose=verbose)
     # self.profiles_norm_avg
-    self._norm_avg_profiles(verbose=verbose)
+    self._norm_avg_profiles(slot=slot,verbose=verbose)
     # self.profiles_norm_mvavg
     if self.nmvavg is not None:
       print('WARNING: Changing self.nmvavg from %s '%(self.nmvavg) +
             'to %s'%nmvavg)
     self.nmvavg = nmvavg
     if self.nmvavg is not None:
-      self._norm_mvavg_profiles(verbose=verbose)
+      self._norm_mvavg_profiles(slot=slot,verbose=verbose)
     return self
   def remove_background(self,bgnavg = 10,verbose=False):
     """
@@ -763,18 +771,18 @@ class BSRTprofiles(object):
     # flag to save status that background has been removed
     self._rm_bg = True
     return self
-  def _set_slots(self,plane,slots):
+  def _set_slots(self,plane,slot):
     """
-    set slot numbers, handles the case of slots = None and only one 
+    set slot numbers, handles the case of slot = None and only one 
     slot.
     """
     # 1) all slots
-    if slots is None:
-      slots = self.profiles[plane].keys()
+    if slot is None:
+      slot = self.profiles[plane].keys()
     # 2) if single slot 
-    elif not hasattr(slots,"__iter__"):
-      slots = [slots]
-    return np.sort(slots,axis=None)
+    elif not hasattr(slot,"__iter__"):
+      slot = [slot]
+    return np.sort(slot,axis=None)
   def get_beta_lsf_variable_names(self):
     """
     get variables names in logging database for lsf correction factor,
@@ -865,14 +873,18 @@ class BSRTprofiles(object):
     lsf = bsrt_lsf_db[lsf_var[plane]][1][idx]
     return np.sqrt(sigma_prof**2-lsf**2)
       
-  def get_stats(self,beam=None,db=None,slots=None,force=False,
+  def get_stats(self,slot=None,beam=None,db=None,force=False,
                 verbose=False,bgnavg = 10):
     """
     calculate statistical parameters for the average over all profiles
     for each timestamp.
+    
+    To use without conversion to emittance, just do:
+      self.get_stats()
 
     Parameters:
     -----------
+    slot: slot number, list of slots or if slot = None takes all slots
     beam: beam, either 'B1' or 'B2' or None for no conversion.
           The specification of the beam is needed to convert picture 
           sigma to beam normalized emittance using 
@@ -884,7 +896,6 @@ class BSRTprofiles(object):
           db = pytimber.LoggingDB()
         or a local one from pagestore:
           db=pagestore.PageStore(dbfile,datadir,readonly=True)
-    slots: slot numbers (single value or list)
     bgnavg: average over first and last bgnavg bins of each
             average profile (self.profiles_norm_avg) to obtain an
             estimate for the background
@@ -923,6 +934,7 @@ class BSRTprofiles(object):
         print('ERROR: Trying to use db = pytimber.LoggingDB(), but ' +
               'pytimber is not imported! You can use ' +
               'pagestore database instead for offline analysis!')
+        pass
 #        return
     else:
       self.db = db
@@ -968,7 +980,7 @@ class BSRTprofiles(object):
     for plane in ['v','h']:
       if verbose:
         print('... start plane %s'%plane.upper())
-      for slot in self._set_slots(plane=plane,slots=slots):
+      for slot in self._set_slots(plane=plane,slot=slot):
         if verbose:
           print('... start slot %s'%slot)
         # 2) calculate/recalculate statistical parameters
@@ -1827,7 +1839,6 @@ class BSRTprofiles(object):
                        sigma_prof=sta['sigma_gauss'],
                        plane=plane,time_stamp=time_stamp)
         xscale = 1/sigma_beam
-
     # select profile for slot and time stamp
     # individual profiles
     if flagprof == 'all':
@@ -1858,7 +1869,7 @@ class BSRTprofiles(object):
         pp['pos'] = prof_smooth[:,0]
         pp['amp'] = prof_smooth[:,1]
     # take only values for which x-range of profile coincides
-    xval = list(set(profs_avg['pos']) and set(profs_ref_avg['pos']))
+    xval = list(set(profs_avg['pos']).intersection(set(profs_ref_avg['pos'])))
     mask = np.array([ pos in xval for pos in profs_avg['pos'] ],
                     dtype=bool)
     mask_ref = np.array([ pos in xval for pos in profs_ref_avg['pos'] ],
@@ -2047,7 +2058,7 @@ class BSRTprofiles(object):
            time_stamp_ref=time_stamp_ref, plane=plane, mvavg = mvavg,
            errbar=errbar, smooth=smooth,xaxis=xaxis,
            verbose=verbose)
-    pl.gca().set_ylim(-0.05,0.05)
+#    pl.gca().set_ylim(-0.05,0.05)
 #     4) ratio
     pl.subplot(222)
     self._plot_residual_ratio(flag='ratio', flagprof='avg', 
@@ -2055,7 +2066,7 @@ class BSRTprofiles(object):
            time_stamp_ref=time_stamp_ref, plane=plane, mvavg=mvavg, 
            errbar=errbar, smooth=smooth,xaxis=xaxis,
            verbose=verbose)
-    pl.gca().set_ylim(-1,5)
+#    pl.gca().set_ylim(-1,5)
     # remove subplot titles, shrink legend size and put it on top of
     # the subplot
     for i in xrange(4):
@@ -2067,7 +2078,7 @@ class BSRTprofiles(object):
     pl.subplots_adjust(hspace=18,wspace=0.1,top=0.75)
     pl.tight_layout()
     return flaux
-  def mk_profile_video(self, slots = None, t1=None, t2=None,
+  def mk_profile_video(self, slot = None, t1=None, t2=None,
                        slot_ref=None, norm = True, 
                        mvavg = True, errbar = True, smooth=None,
                        xaxis='mm',
@@ -2126,9 +2137,8 @@ class BSRTprofiles(object):
     for plane in ['h','v']:
       # set slot and plane, initialize variables
       check_plot[plane] = {}
-      slots = self._set_slots(plane=plane,slots=slots)
       # generate the figure and subplot
-      for slot in slots:
+      for slot in self._set_slots(plane=plane,slot=slot):
         if os.path.exists(tmpdir) == False:
           os.makedirs(tmpdir)
         check_plot[plane][slot] = []
@@ -2372,9 +2382,8 @@ class BSRTprofiles(object):
     for plane in ['h','v']:
       # set slot and plane, initialize variables
       check_plot[plane] = {}
-      slots = self._set_slots(plane=plane,slots=slots)
       # generate the figure and subplot
-      for slot in slots:
+      for slot in self._set_slots(plane=plane,slot=slot):
         if os.path.exists(tmpdir) == False:
           os.makedirs(tmpdir)
         check_plot[plane][slot] = []
@@ -2422,7 +2431,7 @@ class BSRTprofiles(object):
     if (export is False) and (os.path.exists(tmpdir) is True):
       shutil.rmtree(tmpdir)
   def plot_stats(self,slot,plane='h',t1=None,t2=None,param=None,paramidx=None,
-                 avgprof=None,mvavg=None,log=False,kwargs=None):
+                 avgprof=None,mvavg=None,norm=False,log=False,kwargs=None):
     """ 
     plot the statistical parameter *param* for slot *slot* within
     [t1,t2].
@@ -2440,6 +2449,7 @@ class BSRTprofiles(object):
              if avgprof = 'mvavg': use statistical paramters calculated 
                  from moving average profiles (self.profiles_mvavg_stat)
     mvavg: do a moving average over *mvavg* data points, if None do not average
+    norm: if True normalize to initiale value, if False plot raw data
     log: log scale, in this case the absolute value of the data is plotted
     kwargs: dictionary of keyword arguments controlling the plot options, see
               matplotlib.pyplot.plot
@@ -2490,6 +2500,8 @@ class BSRTprofiles(object):
       data = tb.movingaverage(profs_aux[param][mask],navg=mvavg)
     if log:
       data = np.abs(data)
+    if norm:
+      data = data/data[0]
     if kwargs is None:
       pl.plot(time_stamps*1.e-9,data)
     else:
@@ -2499,3 +2511,59 @@ class BSRTprofiles(object):
     pl.ylabel(param)
     pl.legend(loc='best')
     if log: pl.yscale('log')
+  def dump(self,path='.',filename='bsrt.pickle',verbose=False):
+    """
+    dump data with pickle. Used also to combine data from different
+    analysis
+
+    Note: disable autoreload before using pickle!
+      %autoreload 0
+
+    Parameters:
+    -----------
+    path: directory to store data
+    filename: filename
+    verbose : verbose option for additional output
+    """
+    with open(os.path.join(path,filename),'wb') as pickle_file:
+      cPickle.dump(self,pickle_file)
+  def load_pickle(self,pattern='./*',verbose=False):
+    """
+    load data from pickle file and combine it with existing data.
+    Used also to combine data from different analysis.
+
+    This assumes that
+    1) BSRTprofiles.load_files().clean_data() has been run in advance.
+    2) self.norm().get_stats() has been run for individual bunches, e.g.
+        self.norm(slot=20).get_stats(slot=20)
+    Parameters:
+    -----------
+    pattern: glob search pattern
+    verbose : verbose option for additional output
+    """
+    for fn in glob.glob(pattern):
+      if os.path.isfile(fn):
+        try:
+          dnew = cPickle.load(fn)
+        except TypeError:
+          print('ERROR: File %s is not a pickle file'%fn)
+          continue
+      # check that profiles attribute is not empty -> at least load_files
+      # was run
+      if dnew.profiles is None:
+        print('ERROR: Please run BSRTprofiles.load_files(...)' +
+              '.clean_data(...) for class in file %s!'%fn)
+      if self.profiles is None:
+        print('ERROR: Please run BSRTprofiles.load_files(...)' +
+              '.clean_data(...) on your BSRTprofile class!')
+      # check parameters which should all agree if same data was read in
+      for at in self.__dict__.keys():
+        if 'profile' not in at and 'records' not in at:
+          if self.__dict__[at] != dnew.__dict__[at]:
+            print('ERROR: classes differ in attribute %s!'%(at) +
+                  'class: %s, '%(self.__dict__[at]) +
+                  'pickle: %s'%(dnew.__dict__[at]))
+        if at == 'records':
+          if self.__dict__[at] != dnew.__dict__[at]:
+            print('ERROR: records of class and pickled class differ! ' +
+                 'Check that you took the same input file!')
