@@ -117,7 +117,6 @@ def median(x,w):
 
   Returns:
   --------
-  idx_median : index of median value
   x[idx_median] : median
   """
   # order values after x
