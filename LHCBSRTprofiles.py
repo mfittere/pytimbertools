@@ -406,15 +406,15 @@ class BSRTprofiles(object):
             ' in self.profiles_norm')
     for plane in 'h','v':
       self.profiles_norm[plane]={}
-      for slot in self._set_slots(plane=plane,slot=slot):
-        self.profiles_norm[plane][slot] = []
-        for idx in xrange(len(self.profiles[plane][slot])):
+      for sl in self._set_slots(plane=plane,slot=slot):
+        self.profiles_norm[plane][sl] = []
+        for idx in xrange(len(self.profiles[plane][sl])):
           try:
-            prof = self.profiles[plane][slot][idx].copy()
+            prof = self.profiles[plane][sl][idx].copy()
             # assume equal spacing
             dx = prof['pos'][1]-prof['pos'][0]
             prof_int = (dx*prof['amp']).sum()
-            self.profiles_norm[plane][slot].append(
+            self.profiles_norm[plane][sl].append(
                 (prof['time_stamp'],np.array(prof['pos']),
                  np.array(prof['amp']/prof_int)) )
           except ValueError:
@@ -526,15 +526,15 @@ class BSRTprofiles(object):
       if verbose:
         print('... start plane = %s'%plane)
       pna[plane]={}
-      for slot in self._set_slots(plane=plane,slot=slot):
+      for sl in self._set_slots(plane=plane,slot=slot):
         if verbose:
-          print('... normalizing slot = %s'%slot)
-        pna[plane][slot]=[]
-        ts = self.get_timestamps(slot=slot,plane=plane)
+          print('... normalizing slot = %s'%sl)
+        pna[plane][sl]=[]
+        ts = self.get_timestamps(slot=sl,plane=plane)
         # check that there are enough time stamps for nmvavg
         if (nmvavg is not None) and (nmvavg + 1 > len(ts)):
           print('ERROR: not enough profiles for nmvavg = %s!'%nmvavg
-          +'slot = %s, plane = %s'%(slot,plane))
+          +'slot = %s, plane = %s'%(sl,plane))
           continue
         for time_stamp,ts_idx in zip(ts,xrange(len(ts))):
           # a) nmvavg = None: average over all profiles with the same
@@ -550,12 +550,12 @@ class BSRTprofiles(object):
               ts_profs = [ts[-nmvavg-1],ts[-1]]
             else:
               ts_profs = [ts[ts_idx-nmvavg_2],ts[ts_idx+nmvavg_2]]
-          profs = self.get_profile_norm(plane=plane,slot=slot,
+          profs = self.get_profile_norm(plane=plane,slot=sl,
                                          time_stamp=ts_profs)
           # no profiles found -> skip
           if len(profs) == 0:
             if verbose:
-              print('slot %s or timestamp %s not found'%(slot,time_stamp))
+              print('slot %s or timestamp %s not found'%(sl,time_stamp))
             continue
           # one profile
           elif len(profs) == 1:
@@ -600,7 +600,7 @@ class BSRTprofiles(object):
                 check_x +=1
             if check_x != 0:
               print('ERROR: Rebinning of profile failed for ' +
-                    'plane %s, slot %s, timestamp %s'%(plane,slot,time_stamp))
+                    'plane %s, slot %s, timestamp %s'%(plane,sl,time_stamp))
               continue
             # 2) if only left/right profile is taken we need to find
             # the peak, mirror left/right profile, renormalize
@@ -636,7 +636,7 @@ class BSRTprofiles(object):
                 check_x +=1
             if check_x != 0:
               print('ERROR: Mirroring of profile failed. Skipping ' +
-                    'plane %s, slot %s, timestamp %s'%(plane,slot,time_stamp))
+                    'plane %s, slot %s, timestamp %s'%(plane,sl,time_stamp))
               continue
             # take the average. Integral is normalized to 1
             pos = profs[0]['pos']
@@ -646,7 +646,7 @@ class BSRTprofiles(object):
             ampstd = profs['amp'].std(axis=0)
             # error of mean value (= ampstd/sqrt(nmvavg) )
             amperr = ampstd/np.sqrt(len(profs))
-            pna[plane][slot].append((int(time_stamp),
+            pna[plane][sl].append((int(time_stamp),
                                      pos,amp,ampstd,amperr))
     # convert to a structured array and sort by time stamp
     ftype=[('time_stamp',int), ('pos',np.ndarray), ('amp',np.ndarray),
@@ -993,15 +993,19 @@ class BSRTprofiles(object):
     for plane in 'hv':
       if verbose:
         print('... start plane %s'%plane.upper())
-      for slot in self._set_slots(plane=plane,slot=slot):
+      if self.profiles_norm_avg_stat is None:
+        self.profiles_norm_avg_stat[plane] = {}
+      if self.profiles_norm_mvavg_stat is None:
+        self.profiles_norm_mvavg_stat[plane] = {}
+      for sl in self._set_slots(plane=plane,slot=slot):
         if verbose:
-          print('... start slot %s'%slot)
+          print('... start slot %s'%sl)
         # 2) calculate/recalculate statistical parameters
         # initialize/delete old data
-        self.profiles_norm_avg_stat[plane][slot] = []
+        self.profiles_norm_avg_stat[plane][sl] = []
         if self.nmvavg is not None:
-          self.profiles_norm_mvavg_stat[plane][slot] = []
-        for time_stamp in self.get_timestamps(slot=slot,plane=plane):
+          self.profiles_norm_mvavg_stat[plane][sl] = []
+        for time_stamp in self.get_timestamps(slot=sl,plane=plane):
           # 1) estimate centroid with three different methods:
           # 1a) Gaussian fit (cent_gauss)
           # 1b) qGaussian fit (cent_qgauss)
@@ -1030,11 +1034,11 @@ class BSRTprofiles(object):
           # 5i) calculate correlation matrix
           
           # average profile
-          profs_norm_avg = self.get_profile_norm_avg(slot=slot,                  
+          profs_norm_avg = self.get_profile_norm_avg(slot=sl,                  
                              time_stamp=time_stamp, plane=plane)
           # moving average profile
           if self.nmvavg is not None:
-            profs_norm_mvavg = self.get_profile_norm_mvavg(slot=slot,                  
+            profs_norm_mvavg = self.get_profile_norm_mvavg(slot=sl,                  
                              time_stamp=time_stamp, plane=plane)
           else:
             profs_norm_mvavg = None
@@ -1044,11 +1048,11 @@ class BSRTprofiles(object):
               break
             # 1) data is already calculated + force = False-> go to next slot
             if ((avgflag == 'avg') and 
-                (slot in self.profiles_norm_avg_stat[plane].keys()) and 
+                (sl in self.profiles_norm_avg_stat[plane].keys()) and 
                 (force is False)):
               continue
             if ((avgflag == 'mvavg') and 
-                (slot in self.profiles_norm_mvavg_stat[plane].keys()) and 
+                (sl in self.profiles_norm_mvavg_stat[plane].keys()) and 
                 (force is False)):
               continue
             # first: set some initial fit paramters for Gaussian and qGaussian fit
@@ -1130,7 +1134,7 @@ class BSRTprofiles(object):
             except RuntimeError:
               if verbose:
                 print("WARNING: Gaussian fit failed for " +
-                      "plane %s, slotID %s and "%(plane,slot) +
+                      "plane %s, slotID %s and "%(plane,sl) +
                       "timestamp %s"%(time_stamp))
               c_gauss, a_gauss, cent_gauss, sigma_gauss = 0,0,0,0
               c_gauss_err, a_gauss_err = 0,0
@@ -1217,7 +1221,7 @@ class BSRTprofiles(object):
             except RuntimeError,RuntimeWarning:
               if verbose:
                 print("WARNING: q-Gaussian fit failed for " +
-                      "plane %s, slotID %s and "%(plane,slot) +
+                      "plane %s, slotID %s and "%(plane,sl) +
                       "timestamp %s"%(time_stamp))
               c_qgauss, a_qgauss, q_qgauss = 0,0,0
               cent_qgauss, sigma_qgauss = 0,0
@@ -1336,9 +1340,9 @@ class BSRTprofiles(object):
                 sum_bin_left,sum_bin_right,entropie
                 )
             if avgflag == 'avg': 
-              self.profiles_norm_avg_stat[plane][slot].append(data)
+              self.profiles_norm_avg_stat[plane][sl].append(data)
             if avgflag == 'mvavg' and self.nmvavg is not None: 
-              self.profiles_norm_mvavg_stat[plane][slot].append(data)
+              self.profiles_norm_mvavg_stat[plane][sl].append(data)
     # convert to a structured array
     ftype=[('time_stamp',int),('c_gauss',float),('a_gauss',float),
            ('cent_gauss',float),('sigma_gauss',float),
