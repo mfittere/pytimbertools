@@ -1069,13 +1069,13 @@ class BSRTprofiles(object):
               ampstd = np.ones(nsample)
             if fitsplit != 'full':
               cent_median  = tb.median(pna['pos'],pna['amp'])
-              idx = np.where( pna['pos'] == cent_median)[0]
+              idx = int(round(np.where( pna['pos'] == cent_median)[0]))
               if fitsplit == 'left':
                 didx = (nsample-idx)/3
-                ampstd = ampstd*np.array([1]*(idx+didx)+[10]*(nsample - (idx+didx))) 
+                ampstd = ampstd*np.array([1]*(idx+didx)+[100]*(nsample - (idx+didx))) 
               if fitsplit == 'right':
                 didx = 2*idx/3
-                ampstd = ampstd*np.array([10]*(didx)+[1]*(nsample - didx))
+                ampstd = ampstd*np.array([100]*(didx)+[1]*(nsample - didx))
             # q for q-Gaussian fit
             if plane == 'h': # first guess for q-Gaussian
               q0 = 1.1
@@ -1116,7 +1116,7 @@ class BSRTprofiles(object):
               #   over self.nmvavg measurements.
               # - normalize by the nbins - nparam -> xisq_g in [0,1]
               xisq_g = (((pna['amp']-profs_norm_gauss)/
-                       pna['ampstd'])**2).sum()
+                       ampstd)**2).sum()
               # nparam = 4 for Gaussian distribution
               xisq_g = xisq_g/(len(pna['amp'])-4)
               # i) calculate the correlation matrix
@@ -1179,7 +1179,7 @@ class BSRTprofiles(object):
               #   over self.nmvavg measurements.
               # - normalize by the nbins - nparam -> xisq_qg in [0,1]
               xisq_qg = (((pna['amp']-profs_norm_qgauss)/
-                       pna['ampstd'])**2).sum()
+                       ampstd)**2).sum()
               # nparam = 4 for Gaussian distribution
               xisq_qg = xisq_qg/(len(pna['amp'])-5)
               # i) calculate the correlation matrix
@@ -1634,9 +1634,7 @@ class BSRTprofiles(object):
                 c_gauss,a_gauss,cent_gauss,sigma_gauss),
                 color=fit_colors['Red'],
                 linestyle='--',linewidth=1,label='Gaussian fit')
-        print 'gauss',c_gauss,a_gauss,cent_gauss,sigma_gauss
         # plot q-Gaussian fit
-        print 'qgauss',c_qgauss,a_qgauss,q_qgauss,cent_qgauss,beta_qgauss
         pl.plot(profs_avg['pos']*xscale,tb.qgauss_pdf(profs_avg['pos'],
                 c_qgauss,a_qgauss,q_qgauss,cent_qgauss,beta_qgauss),
                 color=fit_colors['DarkRed'],
@@ -2098,7 +2096,7 @@ class BSRTprofiles(object):
       pl.gca().set_title('')
       if i == 2 or i == 3:
         h,l = pl.gca().get_legend_handles_labels()
-        l[-4] = u'Profile 1-%s'%l[-4].split()[-1]
+        l[-4] = u'profile 1-%s'%l[-4].split()[-1]
         pl.gca().legend(h[-4:],l[-4:],bbox_to_anchor=(0., 1.02, 1., .102), loc=3,
                         ncol=2, mode="expand", borderaxespad=0.,
                         fontsize=8)
@@ -2107,7 +2105,7 @@ class BSRTprofiles(object):
                         ncol=2, mode="expand", borderaxespad=0.,
                         fontsize=8)
     pl.tight_layout()
-    pl.subplots_adjust(hspace=0.7,wspace=0.2,top=0.85,bottom=0.1)
+    pl.subplots_adjust(hspace=0.7,wspace=0.25,top=0.85,bottom=0.1)
     return flaux
   def mk_profile_video(self, slot = None, t1=None, t2=None,
                        slot_ref=None, norm = True, 
