@@ -584,12 +584,12 @@ class BSRTprofiles(object):
               profs[i]['pos'] = profs[i]['pos'][mask]
               profs[i]['amp'] = profs[i]['amp'][mask]
               dbin_i = profs[i]['pos'][1]-profs[i]['pos'][0]
-              # rebin to binning of first profile
+              # rebin to binning of first profile, make linear interpolation
+              # in each bin
               if dbin != dbin_i:
-                h = np.histogram(a=profs[i]['pos'],bins = bin_edges,
-                                 normed = True,weights = profs[i]['amp'])
-                profs[i]['pos'] = profs[0]['pos']
-                profs[i]['amp'] = h[0] 
+                profs[i]['amp'] = np.interp(x=profs[0]['pos'],xp=profs[i]['pos'], 
+                                            fp=profs[i]['amp'])                   
+                profs[i]['pos'] = profs[0]['pos']                                 
             # 2) check that x-axis of all profiles are the same
             #    check_x = 0 if x-axis of profiles are the same
             #    check_x > 0 if x-axis differ
@@ -1165,14 +1165,9 @@ class BSRTprofiles(object):
             try:
               p,pcov_qg = curve_fit(f=tb.qgauss_pdf,xdata=pna['pos'],
                                ydata=pna['amp'],sigma=ampstd,
-                               p0=[1.e-3,0.95,q0,0,1],
-                               bounds=([cmin,0.5,1.e-2,-6,1.e-2],
-                               [cmax,2,5/3.,6,4.0])
-# bounds used until 20/07/2017
-#                                 p0=[0,1,1,0,0.3],
-#                                 bounds=([cmin,0,1.e-2,-6,1.e-2],
-#                                [cmax,2,5/3.,6,1.0])
-                                  )
+                               p0=[1.e-3,1,q0,0,1],
+                               bounds=([cmin,0,1.e-2,-6,1.e-2],
+                               [cmax,2,5/3.,6,4.0]))
               profs_norm_qgauss = tb.qgauss_pdf(pna['pos'],*p)
               # h) calculate xi-squared
               # - estimate noise by the standard deviation in each bin
@@ -1191,21 +1186,20 @@ class BSRTprofiles(object):
               # error on p
               psig = [ np.sqrt(pcov_qg[i,i]) for i in range(len(p)) ]
               pcov_beta_q = pcov_qg[2,4]
-              c_qgauss, a_qgauss = p[0], p[1]
+              c_qgauss, acq_qgauss = p[0], p[1]
+              # normalizaton factor cq is absorbed in acq = p[1]
+              # -> extract it again to have a = acq/cq with a approximately
+              #    one and modeling only the background as also for Gaussian
               q_qgauss = p[2]
+              cq_qgauss = tb.qgauss_cq(q_qgauss)
+              a_qgauss = acq_qgauss/cq_qgauss
               cent_qgauss, beta_qgauss = p[3], p[4]
-              c_qgauss_err, a_qgauss_err = psig[0], psig[1]
+              c_qgauss_err, acq_qgauss_err = psig[0], psig[1]
+              a_qgauss_err = acq_qgauss_err/np.abs(cq_qgauss) # assume cq is constant, neglect q-dependence
               q_qgauss_err = psig[2]
               cent_qgauss_err, beta_qgauss_err = psig[3],psig[4]
-              # sigma**2 = 1/(beta*(5-3q)) for q < 5/3
-              # sigma**2 = infty for 5/3 <= q < 2
-              # undefined for 2<= q < 3
+              sigma_qgauss = tb.qgauss_sigma(q_qgauss,beta_qgauss)
               if (q_qgauss < 5/3.):
-                sigma_qgauss = np.sqrt( 1/(beta_qgauss*(5-3*q_qgauss)) )
-                # sigma_f**2 = 
-                #   |df/da|**2*sigma_a**2+|df/db|**2*sigma_b**2
-                #   + 2*(df/da)*(df/db)*sigma_ab
-                # pcov_beta_q = covariance entry beta_q 
                 var_qgauss_err = ( (1/(4*beta_qgauss**3*(5-3*q_qgauss))
                      *beta_qgauss_err**2) +
                   (9/(4*beta_qgauss*(5-3*q_qgauss)**3)
@@ -1213,10 +1207,8 @@ class BSRTprofiles(object):
                   (3/(4*beta_qgauss**2*(5-3*q_qgauss)**2))*pcov_beta_q )
                 sigma_qgauss_err = np.sqrt(var_qgauss_err)
               elif (q_qgauss >= 5/3.) & (q_qgauss < 2):
-                sigma_qgauss = np.inf
                 sigma_qgauss_err = np.inf
               else:
-                sigma_qgauss = 0
                 sigma_qgauss_err = 0
             except RuntimeError,RuntimeWarning:
               if verbose:
@@ -1226,6 +1218,7 @@ class BSRTprofiles(object):
               c_qgauss, a_qgauss, q_qgauss = 0,0,0
               cent_qgauss, sigma_qgauss = 0,0
               c_qgauss_err, a_qgauss_err, q_qgauss_err = 0,0,0
+              cq_qgauss,acq_qgauss,acq_qgauss_err = 0,0,0
               cent_qgauss_err, sigma_qgauss_err = 0,0
               pass
             x,y = pna['pos'],pna['amp']
@@ -1323,10 +1316,11 @@ class BSRTprofiles(object):
                 c_gauss_err, a_gauss_err, cent_gauss_err, sigma_gauss_err,
                 # q-Gaussian fit
                 c_qgauss, a_qgauss, q_qgauss, cent_qgauss, beta_qgauss,
-                sigma_qgauss,
+                sigma_qgauss,cq_qgauss,acq_qgauss,
                 pcov_qg, pcorr_qg, xisq_qg,
                 c_qgauss_err, a_qgauss_err, q_qgauss_err, cent_qgauss_err,
                 beta_qgauss_err, sigma_qgauss_err,
+                acq_qgauss_err,
                 # statistical parameters
                 cent_stat, sigma_stat, cent_median, mad, sigma_median,
                 cent_cumsum, sigma_cumsum_32, sigma_cumsum_68,
@@ -1352,12 +1346,14 @@ class BSRTprofiles(object):
            ('cent_gauss_err',float),('sigma_gauss_err',float),
            ('c_qgauss',float),('a_qgauss',float),('q_qgauss',float),
            ('cent_qgauss',float),('beta_qgauss',float),
-           ('sigma_qgauss',float),
+           ('sigma_qgauss',float),('cq_qgauss',float),
+           ('acq_qgauss',float),
            ('pcov_qgauss',float,(5,5)),('pcorr_qgauss',float,(5,5)),
            ('xisq_qgauss',float),('c_qgauss_err',float),
            ('a_qgauss_err',float),('q_qgauss_err',float),
            ('cent_qgauss_err',float),('beta_qgauss_err',float),
-           ('sigma_qgauss_err',float),('cent_stat',float),
+           ('sigma_qgauss_err',float),('acq_qgauss_err',float),
+           ('cent_stat',float),
            ('sigma_stat',float),('cent_median',float),('mad',float),
            ('sigma_median',float),('cent_cumsum',float),
            ('sigma_cumsum_32',float),('sigma_cumsum_68',float),
@@ -1580,14 +1576,17 @@ class BSRTprofiles(object):
         cent_gauss = stat_aux['cent_gauss']
         sigma_gauss    = stat_aux['sigma_gauss']
         # q-Gaussian fit
-        c_qgauss, a_qgauss = stat_aux['c_qgauss'], stat_aux['a_qgauss']
+        c_qgauss, acq_qgauss = stat_aux['c_qgauss'], stat_aux['acq_qgauss']
         q_qgauss = stat_aux['q_qgauss']
         cent_qgauss = stat_aux['cent_qgauss']
         beta_qgauss    = stat_aux['beta_qgauss']
         if xaxis == 'sigma':
-          sigma_beam  = self.sigma_prof_to_sigma_beam(sigma_prof=sigma_gauss,
+          if self.db is not None:
+            sigma_beam  = self.sigma_prof_to_sigma_beam(sigma_prof=sigma_gauss,
                        plane=plane,time_stamp=time_stamp)
-          xscale = 1/sigma_beam
+            xscale = 1/sigma_beam
+          else:
+            xscale = 1/sigma_gauss
     # raw data profile
     else:
       profs = self.get_profile(slot=slot,time_stamp=time_stamp,
@@ -1636,15 +1635,18 @@ class BSRTprofiles(object):
                 linestyle='--',linewidth=1,label='Gaussian fit')
         # plot q-Gaussian fit
         pl.plot(profs_avg['pos']*xscale,tb.qgauss_pdf(profs_avg['pos'],
-                c_qgauss,a_qgauss,q_qgauss,cent_qgauss,beta_qgauss),
+                c_qgauss,acq_qgauss,q_qgauss,cent_qgauss,beta_qgauss),
                 color=fit_colors['DarkRed'],
                 linestyle='-',linewidth=1,label='q-Gaussian fit')
         if xaxis == 'sigma':
           pl.gca().set_xlim(-6,6)
-          lbl=(r'position [$\sigma_{\rm{Beam}}$], '+
-               r'$\sigma_{\rm{Beam}}$ = %2.2f mm'%sigma_beam)
-          pl.gca().set_xlabel(lbl,fontsize=14)
-
+          if self.db is not None:
+            lbl=(r'position [$\sigma_{\rm{Beam}}$], '+
+                 r'$\sigma_{\rm{Beam}}$ = %2.2f mm'%sigma_beam)
+          else:
+            lbl=(r'position [$\sigma_{\rm{Prof}}$], '+
+                 r'$\sigma_{\rm{Prof}}$ = %2.2f mm'%sigma_gauss)
+          pl.gca().set_xlabel(lbl,fontsize=10)
     return check_plot
   def plot_profile(self, slot = None, time_stamp = None, plane = 'h',
                    verbose = False):
@@ -1737,10 +1739,14 @@ class BSRTprofiles(object):
       sta = self.get_profile_avg_stat(slot=slot,
                    time_stamp=time_stamp,plane=plane)
     if xaxis == 'sigma' and sta is not None:
-      sigma_beam  = self.sigma_prof_to_sigma_beam(
-                     sigma_prof=sta['sigma_gauss'],
-                     plane=plane,time_stamp=time_stamp)
-      xscale = 1/sigma_beam
+      sigma_gauss = sta['sigma_gauss']
+      if self.db is not None:
+        sigma_beam  = self.sigma_prof_to_sigma_beam(
+                       sigma_prof=sigma_gauss,
+                       plane=plane,time_stamp=time_stamp)
+        xscale = 1/sigma_beam
+      else:
+        xscale = 1/sigma_gauss
     # flag if profile plot failed
     check_plot = True
     # individual profiles
@@ -1771,14 +1777,19 @@ class BSRTprofiles(object):
                 label = 'Gaussian fit',color = fit_colors['Red'],
                 linestyle = '--')
         pl.plot(profs_avg['pos']*xscale,(dx*tb.qgauss_pdf(profs_avg['pos'],
-                sta['c_qgauss'],sta['a_qgauss'],sta['q_qgauss'],
-                sta['cent_qgauss'],sta['beta_qgauss'])).cumsum(),label = 'q-Gaussian fit', 
+                sta['c_qgauss'],sta['acq_qgauss'],sta['q_qgauss'],
+                sta['cent_qgauss'],sta['beta_qgauss'])).cumsum(),
+                label = 'q-Gaussian fit', 
                 color = fit_colors['DarkRed'], linestyle = '-')
         if xaxis == 'sigma':
           pl.gca().set_xlim(-6,6)
-          lbl=(r'position [$\sigma_{\rm{Beam}}$], '+
-               r'$\sigma_{\rm{Beam}}$ = %2.2f mm'%sigma_beam)
-          pl.gca().set_xlabel(lbl,fontsize=14)
+          if self.db is not None:
+            lbl=(r'position [$\sigma_{\rm{Beam}}$], '+
+                 r'$\sigma_{\rm{Beam}}$ = %2.2f mm'%sigma_beam)
+          else:
+            lbl=(r'position [$\sigma_{\rm{Prof}}$], '+
+                 r'$\sigma_{\rm{Prof}}$ = %2.2f mm'%sigma_gauss)
+          pl.gca().set_xlabel(lbl,fontsize=10)
       pl.ylabel(r'cumulative distribution functions [a.u.]')
       pl.ylim(-0.05,1.05)
       pl.grid(b=True)
@@ -1857,10 +1868,14 @@ class BSRTprofiles(object):
         sta = self.get_profile_avg_stat(slot=slot,
                        time_stamp=time_stamp,plane=plane)
       if xaxis == 'sigma':
-        sigma_beam  = self.sigma_prof_to_sigma_beam(
-                       sigma_prof=sta['sigma_gauss'],
-                       plane=plane,time_stamp=time_stamp)
-        xscale = 1/sigma_beam
+        sigma_gauss = sta['sigma_gauss']
+        if self.db is not None:
+          sigma_beam  = self.sigma_prof_to_sigma_beam(
+                         sigma_prof=sigma_gauss,
+                         plane=plane,time_stamp=time_stamp)
+          xscale = 1/sigma_beam
+        else:
+          xscale = 1/sigma_gauss
     # select profile for slot and time stamp
     # individual profiles
     if flagprof == 'all':
@@ -1953,7 +1968,7 @@ class BSRTprofiles(object):
                   color=fit_colors['Red'],linestyle='--')
           pl.plot(pos_avg*xscale,amp_avg-
                   tb.qgauss_pdf(pos_avg,sta['c_qgauss'],
-                    sta['a_qgauss'],sta['q_qgauss'],
+                    sta['acq_qgauss'],sta['q_qgauss'],
                     sta['cent_qgauss'],sta['beta_qgauss']), 
                   label = 'q-Gaussian fit',
                   color=fit_colors['DarkRed'],linestyle='-')
@@ -1976,9 +1991,13 @@ class BSRTprofiles(object):
     if check_plot:
       if xaxis == 'sigma' and self.profiles_norm_avg_stat is not None:
         pl.gca().set_xlim(-6,6)
-        lbl=(r'position [$\sigma_{\rm{Beam}}$], '+
-            r'$\sigma_{\rm{Beam}}$ = %2.2f mm'%sigma_beam)
-        pl.gca().set_xlabel(lbl,fontsize=14)
+        if self.db is not None:
+          lbl=(r'position [$\sigma_{\rm{Beam}}$], '+
+              r'$\sigma_{\rm{Beam}}$ = %2.2f mm'%sigma_beam)
+        else:
+          lbl=(r'position [$\sigma_{\rm{Prof}}$], '+
+              r'$\sigma_{\rm{Prof}}$ = %2.2f mm'%sigma_gauss)
+        pl.gca().set_xlabel(lbl,fontsize=10)
       else:
         pl.xlabel('position [mm]')
       if flag == 'residual':
@@ -2304,9 +2323,12 @@ class BSRTprofiles(object):
       stat_aux = self.get_profile_mvavg_stat(slot=slot,
                  time_stamp=time_stamp,plane=plane)
       sigma_gauss = stat_aux['sigma_gauss']
-      sigma_beam  = self.sigma_prof_to_sigma_beam(sigma_prof=sigma_gauss,
+      if self.db is not None:
+        sigma_beam  = self.sigma_prof_to_sigma_beam(sigma_prof=sigma_gauss,
                        plane=plane,time_stamp=time_stamp)
-      xscale = 1/sigma_beam 
+        xscale = 1/sigma_beam 
+      else:
+        xscale = 1/sigma_gauss
     else:
       xscale = 1
     # 1) plot moving average profile + Gaussian fit
@@ -2365,9 +2387,13 @@ class BSRTprofiles(object):
       for ax in ax1,ax2:
         ax.set_xlim(-6,6)
         ax.yaxis.set_tick_params(labelsize=14)
-      lbl=(r'position [$\sigma_{\rm{Beam}}$], '+
+      if self.db is not None:
+        lbl=(r'position [$\sigma_{\rm{Beam}}$], '+
             r'$\sigma_{\rm{Beam}}$ = %2.2f mm'%sigma_beam)
-      ax2.set_xlabel(lbl,fontsize=14)
+      else:
+        lbl=(r'position [$\sigma_{\rm{Prof}}$], '+
+            r'$\sigma_{\rm{Prof}}$ = %2.2f mm'%sigma_gauss)
+      ax2.set_xlabel(lbl,fontsize=10)
       ax2.xaxis.set_tick_params(labelsize=14)
       #otherwise leave unchanged
     else:
