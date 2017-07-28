@@ -26,6 +26,51 @@ def gauss_pdf(x,c,a,mu,sig):
   # gauss_fit(x,mu,sig) = norm.pdf(x,mu,sig)/sig
   return c+a*norm.pdf(x,mu,sig)
 
+def qgauss_sigma(q,beta):
+  """
+  Returns the sigma = sqrt(variance) of the q-Gaussian 
+  distribution. For details see toolbox.qgauss_pdf.
+
+  Parameters:
+  -----------
+  q : q of a q-Gaussian
+  beta : beta of q-Gaussian distribution
+  """
+  if 0 < q < 3:
+    if q < 5/3.:
+      sigma = np.sqrt(1/(beta*(5-3*q)))
+    elif (q >= 5/3.) & (q < 2):
+      sigma = np.inf
+    else:
+      sigma = 0
+    return sigma
+  else:
+    raise ValueError('qgauss_pdf only defined for 0 < q < 3, q=%s'%q)
+
+def qgauss_cq(q):
+  """
+  Returns the normalization constant of the q-Gaussian distribution
+    c_q = int_(-infty)^(infty) eq(-x**2)
+  For details see toolbox.qgauss_pdf.
+
+  Parameters:
+  -----------
+  q : q of a q-Gaussian
+  """
+  if 0 < q < 3:
+    if 1.0 < q and q < 3:
+      c_q = ( ( np.sqrt(np.pi)*gamma((3-q)/(2*(q-1))) ) / 
+              (np.sqrt(q-1)*gamma(1/(q-1))) )
+    elif 0 < q < 1:
+      c_q = ( ( 2*np.sqrt(np.pi)*gamma(1/(1-q)) ) / 
+              ( (3-q)*np.sqrt(1-q)*gamma((3-q)/(2*(1-q))) ) )
+    elif q == 1:
+      c_q = sqrt(np.pi)
+    return c_q
+  else:
+    print(c,a,q,mu,beta)
+    raise ValueError('qgauss_pdf only defined for 0 < q < 3')
+
 def qgauss_pdf(x,c,a,q,mu,beta):
   """
   Probability distribution function for a q-Gaussian distribution. A 
@@ -33,39 +78,26 @@ def qgauss_pdf(x,c,a,q,mu,beta):
   the q-Gaussian converges versus a Gaussian.
  
     qgauss_pdf(x,c,a,mu,beta,q) = 
-       c+a*(sqrt(beta)/c_q)*eq(-beta*(x-mu)**2)
-  with
-    c_q(q) = (sqrt(pi)*gamma((3-q)/(2*(q-1))))/(sqrt(q-1)*gamma(1/(q-1)))  
-  where gamma is the gamma-function, and
-    eq(x) = (1+(1-q)*x)**(1/(1-q))
-  The variance of a q-Gaussian is given by:
-    sigma = 1/(beta*(5-3*q)) for q < 5/3
-          = infinity         for 5/3 < q < 2
-          = undefined        for 2 <= q < 3
+       c+a*sqrt(beta)*eq(-beta*(x-mu)**2)
   The larger q, the heavier the tails of the distribution.
+
+  The parameter c_q = int_(-infty)^(infty) eq(-x**2) for normalisation 
+  of the distribution has been absorbed in the paramter a. Therefore 
+  a/cq should be approximately 1. c_q can be calculated with the
+  function toolbox.qgauss_cq(q). The simga of the distribution
+  can be calculated from toolbox.qgauss_sigma(q,beta).
 
   Parameters:
   -----------
   c : constant offset to fit background of profiles
   a : amplitude to compensate for *c*. a should be close to 1 if c is
-      small. a should be equal to 1 if c is zero.
+      small. a/cq should be equal to 1 if c is zero.
   mu : mean of q-Gaussian distribution
   beta : beta of q-Gaussian distribution
   q : q of a q-Gaussian
   """
   if 0 < q < 3:
-    if 1.01 < q and q < 3:
-      c_q = ( ( np.sqrt(np.pi)*gamma((3-q)/(2*(q-1))) ) / 
-              (np.sqrt(q-1)*gamma(1/(q-1))) )
-      y=c+a*(np.sqrt(beta)/c_q)*( (1-beta*(1-q)*(x-mu)**2)**(1/(1-q)) )
-    elif 0 < q < 0.99:
-      c_q = ( ( 2*np.sqrt(np.pi)*gamma(1/(1-q)) ) / 
-              ( (3-q)*np.sqrt(1-q)*gamma((3-q)/(2*(1-q))) ) )
-      y=c+a*(np.sqrt(beta)/c_q)*( (1-beta*(1-q)*(x-mu)**2)**(1/(1-q)) )
-    elif q >= 0.99 and q <= 1.01:
-      y=gauss_pdf(x,c,a,mu,np.sqrt(1/(beta*(5-3*q))))
-#    if np.isnan(y).any() or np.isinf(y).any():
-#      print y[0:10]
+    y=c+a*np.sqrt(beta)*((1-beta*(1-q)*(x-mu)**2)**(1/(1-q)))
     return np.nan_to_num(y)
   else:
     print(c,a,q,mu,beta)
