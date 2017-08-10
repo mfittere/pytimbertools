@@ -799,7 +799,7 @@ class BSRTprofiles(object):
                                          +'%LSF_%')                     
     [beta_h_var, beta_v_var] = db.search('%LHC%BSRT%'+beam.upper()      
                                          +'%BETA%')                     
-    energy_var = u'LHC.STATS:ENERGY'                                    
+    energy_var = u'LHC.BOFSU:OFC_ENERGY'                                    
     return lsf_h_var,lsf_v_var,beta_h_var,beta_v_var,energy_var
   def get_beta_lsf_energy(self):
     """
@@ -835,22 +835,29 @@ class BSRTprofiles(object):
     bsrt_lsf = db.get(bsrt_lsf_var, t1_lsf, t2)
     # only logged rarely, loop until array is not empty, print warning
     # if time window exceeds one month
-    while (bsrt_lsf[lsf_h_var][0].size  == 0 or
-           bsrt_lsf[lsf_v_var][0].size  == 0 or
-           bsrt_lsf[beta_h_var][0].size == 0 or
-           bsrt_lsf[beta_v_var][0].size == 0 or
-           bsrt_lsf[energy_var][0].size == 0):
-      if (np.abs(t1_lsf-t1) > 30*24*60*60):
-        raise ValueError(('Last logging time for ' + ', %s'*5
-        + ' exceeds 1 month! Check your data!!!')%tuple(bsrt_lsf_var))
-        return
-      else:
-        t1_lsf = t1_lsf-24*60*60
-        bsrt_lsf = db.get(bsrt_lsf_var, t1_lsf, t2)
-        # convert [s] -> [ns] for all time stamps 
-        for k in bsrt_lsf.keys():
-          bsrt_lsf[k] = list(bsrt_lsf[k])
-          bsrt_lsf[k][0] = bsrt_lsf[k][0]*1.e9
+    # check that time stamp of lsf,beta,energy is before first sigma
+    # timestamp
+    for var in bsrt_lsf_var:
+      while (bsrt_lsf[var][0].size  == 0):
+        if (np.abs(t1_lsf-t1) > 30*24*60*60):
+          raise ValueError(('Last logging time for ' + ', %s'*5
+          + ' exceeds 1 month! Check your data!!!')%tuple(bsrt_lsf_var))
+          return
+        else:
+          t1_lsf = t1_lsf-24*60*60
+          bsrt_lsf = db.get(bsrt_lsf_var, t1_lsf, t2)
+      while (bsrt_lsf[var][0][0] > t1):
+        if (np.abs(t1_lsf-t1) > 30*24*60*60):
+          raise ValueError(('Last logging time for ' + ', %s'*5
+          + ' exceeds 1 month! Check your data!!!')%tuple(bsrt_lsf_var))
+          return
+        else:
+          t1_lsf = t1_lsf-24*60*60
+          bsrt_lsf = db.get(bsrt_lsf_var, t1_lsf, t2)
+    # convert [s] -> [ns] for all time stamps 
+    for k in bsrt_lsf.keys():
+      bsrt_lsf[k] = list(bsrt_lsf[k])
+      bsrt_lsf[k][0] = bsrt_lsf[k][0]*1.e9
     return bsrt_lsf
   def sigma_prof_to_sigma_beam(self,sigma_prof,plane,time_stamp):
     """
