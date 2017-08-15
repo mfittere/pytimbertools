@@ -862,7 +862,9 @@ class BSRTprofiles(object):
   def update_beta_lsf_energy(self,t1=None,t2=None,beth=None,betv=None,                   
                         lsfh=None,lsfv=None,energy=None,verbose=True):                             
     """
-    update beta function and lsf factor and recalculate emittances
+    update beta function and lsf factor and recalculate emittances. If
+    parameter is None, the parameter is set back to the timber value if
+    self.db is defined.
 
     beth,betv: hor.,vert. beta [m]
     lsfh,lsfv: lsf conversion factor [mm]?
@@ -875,7 +877,6 @@ class BSRTprofiles(object):
     beta_var = {}
     (lsf_var['h'],lsf_var['v'],beta_var['h'],beta_var['v'],
          energy_var) = bsrt_lsf_var
-    print 'energy',energy,np.min(bsrt_lsf_db[energy_var][1])
     if verbose:
       for k,v,dbk in zip(['beth','betv','lsfh','lsfv','energy'],
                          [beth,betv,lsfh,lsfv,energy],
@@ -887,12 +888,7 @@ class BSRTprofiles(object):
       profs = self.__dict__[stat]
       # loop over plane
       for p in profs.keys():
-        if (p.lower() == 'h' and beth is None and lsfh is None and 
-            energy is None):
-          continue
-        if (p.lower() == 'v' and betv is None and lsfv is None and 
-            energy is None):
-          continue
+        params = (beth,lsfh,betv,lsfv,energy)
         # loop over slots
         for s in profs[p].keys():
           times = profs[p][s]['time_stamp']
@@ -902,6 +898,8 @@ class BSRTprofiles(object):
             t2 = times[-1]
           # select time stamps
           mask  = np.logical_and(times >= t1, times <= t2)
+          if not mask.any():
+            print('WARNING: No timestamps found! Have you converted from s to ns?')
           # loop over time stamps
           for ii in xrange(len(times)):
             if not mask[ii]:
@@ -913,25 +911,25 @@ class BSRTprofiles(object):
               beta = bsrt_lsf_db[beta_var[p]][1][idx]
               lsf  = bsrt_lsf_db[lsf_var[p]][1][idx]
               egev = bsrt_lsf_db[energy_var][1][idx]
-            elif None in [beth,lsfh,betv,lsfv,energy]:
+            elif None in params:
               print('ERROR: no timber database defined and not all '+
                     'beta, lsf and energy values are defined!')
               print('  beth,lsfh,betv,lsfv,energy = '+'%4.2f, '*3 +
-                    '%4.2f'%(beth,lsfh,betv,lsfv,energy))
-            if p.lower == 'h':
-               if beth is not None:
-                 beta = beth
-                 profs[p][s]['beta'][ii] = beta
-               if lsfh is not None:
-                 lsf = lsfh
-                 profs[p][s]['lsf'][ii] = lsf
-            if p.lower == 'v':
-               if betv is not None:
-                 beta = betv
-                 profs[p][s]['beta'][ii] = beta
-               if lsfv is not None:
-                 lsf = lsfv
-                 profs[p][s]['lsf'][ii] = lsf
+                    '%4.2f'%params)
+            if p.lower() == 'h':
+              if beth is not None:
+                beta = beth
+                profs[p][s]['beta'][ii] = beta
+              if lsfh is not None:
+                lsf = lsfh
+                profs[p][s]['lsf'][ii] = lsf
+            if p.lower() == 'v':
+              if betv is not None:
+                beta = betv
+                profs[p][s]['beta'][ii] = beta
+              if lsfv is not None:
+                lsf = lsfv
+                profs[p][s]['lsf'][ii] = lsf
             if energy is not None:
               egev = energy
               profs[p][s]['energy'][ii] = egev
@@ -948,33 +946,7 @@ class BSRTprofiles(object):
                             EGeV=egev,m0=938.272046)
               profs[p][s][key.replace('sigma','emit')][ii] = emit_norm 
       self.__dict__[stat] = profs
-    return None
-#  def sigma_prof_to_sigma_beam(self,sigma_prof,plane,time_stamp):
-#    """
-#    convert profile sigma to beam sigma
-#      sigma_beam = sqrt(sigma_prof**2-lsf**2)
-#
-#    Parameter:
-#    ----------
-#    sigma_prof: profile sigma [mm]
-#    plane: 'h' or 'v'
-#    time_stamp: time stamp
-#
-#    Returns:
-#    --------
-#    sigma_beam: beam sigma [mm]
-#    """
-#    # get variable names
-#    bsrt_lsf_var = self.get_beta_lsf_variable_names()
-#    lsf_var={};beta_var={}
-#    (lsf_var['h'],lsf_var['v'],beta_var['h'],beta_var['v'],
-#         energy_var) = bsrt_lsf_var
-#    # extract the data
-#    bsrt_lsf_db = self.get_beta_lsf_energy()
-#    idx = np.where(time_stamp-bsrt_lsf_db[lsf_var[plane]][0]>=0.)[0][-1]
-#    lsf = bsrt_lsf_db[lsf_var[plane]][1][idx]
-#    return np.sqrt(sigma_prof**2-lsf**2)
-      
+    return profs
   def get_stats(self,slot=None,beam=None,db=None,force=False,
                 verbose=False,bgnavg = 10,fitsplit = 'full'):
     """
