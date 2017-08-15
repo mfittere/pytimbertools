@@ -859,8 +859,8 @@ class BSRTprofiles(object):
       bsrt_lsf[k] = list(bsrt_lsf[k])
       bsrt_lsf[k][0] = bsrt_lsf[k][0]*1.e9
     return bsrt_lsf
-  def update_beta_lsf_energy(self,t1,t2,beth=None,betv=None,                   
-                        lsfh=None,lsfv=None,energy=None):                             
+  def update_beta_lsf_energy(self,t1=None,t2=None,beth=None,betv=None,                   
+                        lsfh=None,lsfv=None,energy=None,verbose=True):                             
     """
     update beta function and lsf factor and recalculate emittances
 
@@ -871,8 +871,18 @@ class BSRTprofiles(object):
     if self.db is not None:
       bsrt_lsf_db = self.get_beta_lsf_energy()
     bsrt_lsf_var = self.get_beta_lsf_variable_names()
+    lsf_var  = {}
+    beta_var = {}
     (lsf_var['h'],lsf_var['v'],beta_var['h'],beta_var['v'],
          energy_var) = bsrt_lsf_var
+    print 'energy',energy,np.min(bsrt_lsf_db[energy_var][1])
+    if verbose:
+      for k,v,dbk in zip(['beth','betv','lsfh','lsfv','energy'],
+                         [beth,betv,lsfh,lsfv,energy],
+                         [beta_var['h'],beta_var['v'],
+                          lsf_var['h'],lsf_var['v'],energy_var]):
+        if v is not None:
+          print(k,': old=',bsrt_lsf_db[dbk][1],', new=',v)
     for stat in ['profiles_norm_avg_stat','profiles_norm_mvavg_stat']: 
       profs = self.__dict__[stat]
       # loop over plane
@@ -886,6 +896,10 @@ class BSRTprofiles(object):
         # loop over slots
         for s in profs[p].keys():
           times = profs[p][s]['time_stamp']
+          if t1 is None:
+            t1 = times[0]
+          if t2 is None:
+            t2 = times[-1]
           # select time stamps
           mask  = np.logical_and(times >= t1, times <= t2)
           # loop over time stamps
@@ -895,22 +909,32 @@ class BSRTprofiles(object):
             time_stamp = profs[p][s]['time_stamp'][ii]
             if self.db is not None: 
               idx = (np.where(time_stamp-
-                              bsrt_lsf_db[lsf_var[plane]][0]>=0.)[0][-1])
-              beta = bsrt_lsf_db[beta_var[plane]][1][idx]
-              lsf  = bsrt_lsf_db[lsf_var[plane]][1][idx]
+                              bsrt_lsf_db[lsf_var[p]][0]>=0.)[0][-1])
+              beta = bsrt_lsf_db[beta_var[p]][1][idx]
+              lsf  = bsrt_lsf_db[lsf_var[p]][1][idx]
               egev = bsrt_lsf_db[energy_var][1][idx]
             elif None in [beth,lsfh,betv,lsfv,energy]:
-              print('ERROR: no timber database defined and not all
-                     beta, lsf and energy values are defined!')
+              print('ERROR: no timber database defined and not all '+
+                    'beta, lsf and energy values are defined!')
               print('  beth,lsfh,betv,lsfv,energy = '+'%4.2f, '*3 +
                     '%4.2f'%(beth,lsfh,betv,lsfv,energy))
             if p.lower == 'h':
-               if beth is not None: beta = beth
-               if lsfh is not None: lsf = lsfh
+               if beth is not None:
+                 beta = beth
+                 profs[p][s]['beta'][ii] = beta
+               if lsfh is not None:
+                 lsf = lsfh
+                 profs[p][s]['lsf'][ii] = lsf
             if p.lower == 'v':
-               if betv is not None: beta = betv
-               if lsfv is not None: lsf = lsfv
-            if energy is not None: egev = energy
+               if betv is not None:
+                 beta = betv
+                 profs[p][s]['beta'][ii] = beta
+               if lsfv is not None:
+                 lsf = lsfv
+                 profs[p][s]['lsf'][ii] = lsf
+            if energy is not None:
+              egev = energy
+              profs[p][s]['energy'][ii] = egev
             # use sigma_gauss to later rescale plot x-axis to sigma
             sigma = profs[p][s]['sigma_gauss'][ii]
             profs[p][s]['sigma_beam'][ii] = ((sigma**2 - lsf**2)/beta)
@@ -921,35 +945,35 @@ class BSRTprofiles(object):
               # geometric emittance
               emit_geom = ((sigma**2 - lsf**2)/beta)
               emit_norm = pytimber.toolbox.emitnorm(emit_geom,
-                            egev,m0=938.272046))
+                            EGeV=egev,m0=938.272046)
               profs[p][s][key.replace('sigma','emit')][ii] = emit_norm 
       self.__dict__[stat] = profs
     return None
-  def sigma_prof_to_sigma_beam(self,sigma_prof,plane,time_stamp):
-    """
-    convert profile sigma to beam sigma
-      sigma_beam = sqrt(sigma_prof**2-lsf**2)
-
-    Parameter:
-    ----------
-    sigma_prof: profile sigma [mm]
-    plane: 'h' or 'v'
-    time_stamp: time stamp
-
-    Returns:
-    --------
-    sigma_beam: beam sigma [mm]
-    """
-    # get variable names
-    bsrt_lsf_var = self.get_beta_lsf_variable_names()
-    lsf_var={};beta_var={}
-    (lsf_var['h'],lsf_var['v'],beta_var['h'],beta_var['v'],
-         energy_var) = bsrt_lsf_var
-    # extract the data
-    bsrt_lsf_db = self.get_beta_lsf_energy()
-    idx = np.where(time_stamp-bsrt_lsf_db[lsf_var[plane]][0]>=0.)[0][-1]
-    lsf = bsrt_lsf_db[lsf_var[plane]][1][idx]
-    return np.sqrt(sigma_prof**2-lsf**2)
+#  def sigma_prof_to_sigma_beam(self,sigma_prof,plane,time_stamp):
+#    """
+#    convert profile sigma to beam sigma
+#      sigma_beam = sqrt(sigma_prof**2-lsf**2)
+#
+#    Parameter:
+#    ----------
+#    sigma_prof: profile sigma [mm]
+#    plane: 'h' or 'v'
+#    time_stamp: time stamp
+#
+#    Returns:
+#    --------
+#    sigma_beam: beam sigma [mm]
+#    """
+#    # get variable names
+#    bsrt_lsf_var = self.get_beta_lsf_variable_names()
+#    lsf_var={};beta_var={}
+#    (lsf_var['h'],lsf_var['v'],beta_var['h'],beta_var['v'],
+#         energy_var) = bsrt_lsf_var
+#    # extract the data
+#    bsrt_lsf_db = self.get_beta_lsf_energy()
+#    idx = np.where(time_stamp-bsrt_lsf_db[lsf_var[plane]][0]>=0.)[0][-1]
+#    lsf = bsrt_lsf_db[lsf_var[plane]][1][idx]
+#    return np.sqrt(sigma_prof**2-lsf**2)
       
   def get_stats(self,slot=None,beam=None,db=None,force=False,
                 verbose=False,bgnavg = 10,fitsplit = 'full'):
@@ -1329,6 +1353,7 @@ class BSRTprofiles(object):
             # if no beam is given
             (sigma_beam,emit_gauss,emit_qgauss,emit_stat,emit_median,
             emit_cumsum_32,emit_cumsum_68) = (0,)*7
+            (beta,lsf,energy) = (0,)*3
             # if beam given convert picture sigma to beam sigma and then 
             # to normalized emittance
             if (beam is not None) and (beam.upper() in ['B1','B2']):
@@ -1340,17 +1365,19 @@ class BSRTprofiles(object):
                 bsrt_lsf[k] = bsrt_lsf_db[k][1][idx]
               # convert sigma to emittance
               emit_norm = []
+              beta  = bsrt_lsf[beta_var[plane]]
+              lsf = bsrt_lsf[lsf_var[plane]]
+              energy = bsrt_lsf[energy_var]
               for sigma in [sigma_gauss,sigma_qgauss,sigma_stat,
                 sigma_median,sigma_cumsum_32,sigma_cumsum_68]:
                 # geometric emittance
-                emit_geom = ((sigma**2 - bsrt_lsf[lsf_var[plane]]**2)/
-                             bsrt_lsf[beta_var[plane]]) 
+                emit_geom = ((sigma**2 - lsf**2)/beta) 
                 emit_norm.append(pytimber.toolbox.emitnorm(emit_geom,
-                                bsrt_lsf[energy_var],m0=938.272046))
+                                energy,m0=938.272046))
               [emit_gauss,emit_qgauss,emit_stat,emit_median,
                             emit_cumsum_32,emit_cumsum_68] = emit_norm
               # use sigma to scale later x [mm] to x [sigma]
-              sigma_beam = np.sqrt(sigma_gauss**2 - bsrt_lsf[lsf_var[plane]]**2)
+              sigma_beam = np.sqrt(sigma_gauss**2 - lsf**2)
             # estimate of halo
             # y) sum bins between x_min mm and x_max mm
             #    sum bins between -x_min mm and -x_max mm (remember bump  
@@ -1399,6 +1426,8 @@ class BSRTprofiles(object):
                 cent_stat, sigma_stat, cent_median, mad, sigma_median,
                 cent_cumsum, sigma_cumsum_32, sigma_cumsum_68,
                 cent_peak,
+                # beta,lsf,energy for conversion
+                beta,lsf,energy,
                 # beam sigma from Gaussian fit
                 sigma_beam,
                 # normalized emittance
@@ -1433,7 +1462,8 @@ class BSRTprofiles(object):
            ('sigma_stat',float),('cent_median',float),('mad',float),
            ('sigma_median',float),('cent_cumsum',float),
            ('sigma_cumsum_32',float),('sigma_cumsum_68',float),
-           ('cent_peak',float),('sigma_beam',float),
+           ('cent_peak',float),('beta',float),('lsf',float),
+           ('energy',float),('sigma_beam',float),
            ('emit_gauss',float),('emit_qgauss',float),
            ('emit_stat',float),('emit_median',float),
            ('emit_cumsum_32',float),('emit_cumsum_68',float),
@@ -1650,16 +1680,15 @@ class BSRTprofiles(object):
         # Gaussian fit
         c_gauss, a_gauss = stat_aux['c_gauss'], stat_aux['a_gauss']
         cent_gauss = stat_aux['cent_gauss']
-        sigma_gauss    = stat_aux['sigma_gauss']
+        sigma_gauss = stat_aux['sigma_gauss']
+        sigma_beam  = stat_aux['sigma_beam']
         # q-Gaussian fit
         c_qgauss, acq_qgauss = stat_aux['c_qgauss'], stat_aux['acq_qgauss']
         q_qgauss = stat_aux['q_qgauss']
         cent_qgauss = stat_aux['cent_qgauss']
         beta_qgauss    = stat_aux['beta_qgauss']
         if xaxis == 'sigma':
-          if self.db is not None:
-            sigma_beam  = self.sigma_prof_to_sigma_beam(sigma_prof=sigma_gauss,
-                       plane=plane,time_stamp=time_stamp)
+          if sigma_beam !=0:
             xscale = 1/sigma_beam
           else:
             xscale = 1/sigma_gauss
@@ -1816,10 +1845,8 @@ class BSRTprofiles(object):
                    time_stamp=time_stamp,plane=plane)
     if xaxis == 'sigma' and sta is not None:
       sigma_gauss = sta['sigma_gauss']
-      if self.db is not None:
-        sigma_beam  = self.sigma_prof_to_sigma_beam(
-                       sigma_prof=sigma_gauss,
-                       plane=plane,time_stamp=time_stamp)
+      sigma_beam  = sta['sigma_beam']
+      if sigma_beam != 0:
         xscale = 1/sigma_beam
       else:
         xscale = 1/sigma_gauss
@@ -1945,10 +1972,8 @@ class BSRTprofiles(object):
                        time_stamp=time_stamp,plane=plane)
       if xaxis == 'sigma':
         sigma_gauss = sta['sigma_gauss']
-        if self.db is not None:
-          sigma_beam  = self.sigma_prof_to_sigma_beam(
-                         sigma_prof=sigma_gauss,
-                         plane=plane,time_stamp=time_stamp)
+        sigma_beam  = sta['sigma_beam']
+        if sigma_beam !=0:
           xscale = 1/sigma_beam
         else:
           xscale = 1/sigma_gauss
@@ -2399,9 +2424,8 @@ class BSRTprofiles(object):
       stat_aux = self.get_profile_mvavg_stat(slot=slot,
                  time_stamp=time_stamp,plane=plane)
       sigma_gauss = stat_aux['sigma_gauss']
-      if self.db is not None:
-        sigma_beam  = self.sigma_prof_to_sigma_beam(sigma_prof=sigma_gauss,
-                       plane=plane,time_stamp=time_stamp)
+      sigma_beam  = stat_aux['sigma_beam']
+      if sigma_beam != 0:
         xscale = 1/sigma_beam 
       else:
         xscale = 1/sigma_gauss
