@@ -906,11 +906,15 @@ class BSRTprofiles(object):
               continue
             time_stamp = profs[p][s]['time_stamp'][ii]
             if self.db is not None: 
-              idx = (np.where(time_stamp-
-                              bsrt_lsf_db[lsf_var[p]][0]>=0.)[0][-1])
-              beta = bsrt_lsf_db[beta_var[p]][1][idx]
-              lsf  = bsrt_lsf_db[lsf_var[p]][1][idx]
-              egev = bsrt_lsf_db[energy_var][1][idx]
+              # get lsf,beta and energy with time stamp closest to
+              # time_stamp and smaller than time_stamp
+              bsrt_lsf = {}
+              for k in lsf_var[p],beta_var[p],energy_var:
+                idx = np.where(time_stamp-bsrt_lsf_db[k][0]>=0.)[0][-1]
+                bsrt_lsf[k] = bsrt_lsf_db[k][1][idx]
+              beta = bsrt_lsf[beta_var[p]]
+              lsf  = bsrt_lsf[lsf_var[p]]
+              egev = bsrt_lsf[energy_var]
             elif None in params:
               print('ERROR: no timber database defined and not all '+
                     'beta, lsf and energy values are defined!')
@@ -946,7 +950,6 @@ class BSRTprofiles(object):
                             EGeV=egev,m0=938.272046)
               profs[p][s][key.replace('sigma','emit')][ii] = emit_norm 
       self.__dict__[stat] = profs
-    return profs
   def get_stats(self,slot=None,beam=None,db=None,force=False,
                 verbose=False,bgnavg = 10,fitsplit = 'full'):
     """
