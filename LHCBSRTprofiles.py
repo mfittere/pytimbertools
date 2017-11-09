@@ -222,14 +222,18 @@ class BSRTprofiles(object):
       fns = files
     elif isinstance(files,str):
       fns = glob.glob(files)
+      if len(fns) == 0:
+        raise IOError('File %s not found!'%files)
     else:
       raise ValueError('Give either a list of filenames or a search ' +
                        'string!')
-      return
     profiles = {'h': {}, 'v': {}}
     records = {}
     for fn in fns:
-      if verbose: print '... loading file %s'%fn
+      if os.path.isfile(fn):
+        if verbose: print '... loading file %s'%fn
+      else:
+        raise IOError('File %s not found!'%fn)
       # open the binary file
       r = bio.BinaryReader(fn)
       # read the file
@@ -271,16 +275,16 @@ class BSRTprofiles(object):
                   print("WARNING: len(projPositionSet1) = 0 for " +
                         "slotID %s, timestamp %s! "%(slotID,time_stamp) + 
                         "Data is discarded (both *Set1 and *Set2)!")
-              elif (len(profilesSet1[width*(i*num_bunches+j):
-                         width*(i*num_bunches+(j+1))]) == 0):
+              elif (len(profilesSet1[width*(i+j):
+                         width*(i+(j+1))]) == 0):
                 check_data = False
                 if verbose:
                   print("WARNING: len(profilesSet1[...]) = 0 for " +
                         "slotID %s, timestamp %s! "%(slotID,time_stamp) +
                         " Data is discarded (both *Set1 and *Set2)!")
               elif (len(projPositionSet1)!=
-                     len(profilesSet1[width*(i*num_bunches+j):
-                           width*(i*num_bunches+(j+1))])):
+                     len(profilesSet1[width*(i+j):
+                           width*(i+(j+1))])):
                 if verbose:
                   print("WARNING: len(projPositionSet1) != " + 
                         "len(profilesSet1[...]) for " +
@@ -294,16 +298,16 @@ class BSRTprofiles(object):
                   print("WARNING: len(projPositionSet2) = 0 for " +
                         "slotID %s, timestamp %s! "%(slotID,time_stamp) + 
                         "Data is discarded (both *Set1 and *Set2)!")
-              elif (len(profilesSet2[height*(i*num_bunches+j):
-                         height*(i*num_bunches+(j+1))]) == 0):
+              elif (len(profilesSet2[height*(i+j):
+                         height*(i+(j+1))]) == 0):
                 check_data = False
                 if verbose:
                   print("WARNING: len(profilesSet2[...]) = 0 for " +
                         "slotID %s, timestamp %s! "%(slotID,time_stamp) +
                         " Data is discarded (both *Set1 and *Set2)!")
               elif (len(projPositionSet2)!=
-                     len(profilesSet2[height*(i*num_bunches+j):
-                           height*(i*num_bunches+(j+1))])):
+                     len(profilesSet2[height*(i+j):
+                           height*(i+(j+1))])):
                 if verbose:
                   print("WARNING: len(projPositionSet2) != " + 
                         "len(profilesSet2[...]) for " +
@@ -315,8 +319,8 @@ class BSRTprofiles(object):
               if check_data:
                 # h values go from -x to +x
                 profiles['h'][slotID].append( (time_stamp, projPositionSet1,
-                    np.array(profilesSet1[width*(i*num_bunches+j):
-                                         width*(i*num_bunches+(j+1))],
+                    np.array(profilesSet1[width*(i+j):
+                                         width*(i+(j+1))],
                              dtype= np.float_)) )
                 # v values go from x to -x
                 # -> reverse the order
@@ -324,16 +328,16 @@ class BSRTprofiles(object):
                   profiles['v'][slotID].append( (time_stamp,
                     np.fliplr([projPositionSet2])[0],
                     np.fliplr([np.array(
-                      profilesSet2[height*(i*num_bunches+j):
-                                   height*(i*num_bunches+(j+1))],
+                      profilesSet2[height*(i+j):
+                                   height*(i+(j+1))],
                              dtype= np.float_)])[0]) )
                 # v values go from -x to x
                 # -> keep the order
                 else:
                   profiles['v'][slotID].append( (time_stamp,
                     projPositionSet2,
-                    np.array(profilesSet2[height*(i*num_bunches+j):
-                                          height*(i*num_bunches+(j+1))],
+                    np.array(profilesSet2[height*(i+j):
+                                          height*(i+(j+1))],
                              dtype= np.float_)) )
           # check the file position
           if r.tell() != offset:
@@ -557,8 +561,12 @@ class BSRTprofiles(object):
             if verbose:
               print('slot %s or timestamp %s not found'%(sl,time_stamp))
             continue
-          # one profile
-          elif len(profs) == 1:
+          # one profile, there a tuple with (timestap,pos,amp) of the one profile
+          # is returned -> this is changed! 
+#          elif len(profs) == 3 and type(profs[0]) is np.int64:
+#            pos = profs['pos']
+#            amp = profs['amp']
+          elif len(profs) ==1:
             pos = profs[0]['pos']
             amp = profs[0]['amp']
             ampstd = np.zeros(len(pos))
@@ -646,7 +654,7 @@ class BSRTprofiles(object):
             ampstd = profs['amp'].std(axis=0)
             # error of mean value (= ampstd/sqrt(nmvavg) )
             amperr = ampstd/np.sqrt(len(profs))
-            pna[plane][sl].append((int(time_stamp),
+          pna[plane][sl].append((int(time_stamp),
                                      pos,amp,ampstd,amperr))
     # convert to a structured array and sort by time stamp
     ftype=[('time_stamp',int), ('pos',np.ndarray), ('amp',np.ndarray),
@@ -674,7 +682,7 @@ class BSRTprofiles(object):
                 - estimate of noise for each bin for profiles i = std over
                   previous/following nmvavg profiles (-> in total
                   nmvavg + 1 profiles)
-                Note: nmvavg must be an even number!
+                Note: nmvavg must be an even number or None!
     split: take only half of the profile - needed at top energy
            where profiles are diffraction limited. The profile is split by
            detecting the peak and then mirroring it on the other side.
@@ -1066,7 +1074,8 @@ class BSRTprofiles(object):
         print('... start plane %s'%plane.upper())
       if self.profiles_norm_avg_stat is None:
         self.profiles_norm_avg_stat[plane] = {}
-      if self.profiles_norm_mvavg_stat is None:
+      if ((self.profiles_norm_mvavg_stat is None) and 
+          (self.nmvavg is not None)):
         self.profiles_norm_mvavg_stat[plane] = {}
       for sl in self._set_slots(plane=plane,slot=slot):
         if verbose:
@@ -1115,6 +1124,18 @@ class BSRTprofiles(object):
             profs_norm_mvavg = None
           for pna,avgflag in zip([profs_norm_avg,profs_norm_mvavg],
                                  ['avg','mvavg']):
+            # check that only one profile is returned
+            if len(pna) !=1:
+              errorstr = (('ERROR: Exactly one %s profile '+
+                           'for time stamp = %s, slot = %s, '+
+                           ', plane = %s should be returned. Instead '+
+                           '%s profiles are returned!')
+                          %(avgflag,time_stamp,sl,plane,len(pna)))
+              print(errorstr)
+              return
+#              continue
+            else:
+              pna = pna[0]
             if avgflag == 'mvavg' and self.nmvavg is None:
               break
             # 1) data is already calculated + force = False-> go to next slot
@@ -1498,10 +1519,11 @@ class BSRTprofiles(object):
     unix time [ns] and plane *plane*
     """
     mask = self.profiles[plane][slot]['time_stamp'] == time_stamp
-    if len(np.where(mask==True)[0]) == 1:
-      return self.profiles[plane][slot][mask][0]
-    else:
-      return self.profiles[plane][slot][mask]
+#    if len(np.where(mask==True)[0]) == 1:
+#      return self.profiles[plane][slot][mask][0]
+#    else:
+#      return self.profiles[plane][slot][mask]
+    return self.profiles[plane][slot][mask]
   def get_profile_norm(self, slot = None, time_stamp = None, 
                        plane = 'h'):
     """
@@ -1535,10 +1557,11 @@ class BSRTprofiles(object):
     # extract data
     pn = self.profiles_norm[plane][slot]
     mask = np.logical_and(pn['time_stamp']>=t1, pn['time_stamp']<=t2)
-    if len(np.where(mask==True)[0]) == 1:
-      return self.profiles_norm[plane][slot][mask][0]
-    else:
-      return self.profiles_norm[plane][slot][mask]
+#    if len(np.where(mask==True)[0]) == 1:
+#      return self.profiles_norm[plane][slot][mask][0]
+#    else:
+#      return self.profiles_norm[plane][slot][mask]
+    return self.profiles_norm[plane][slot][mask]
   def get_profile_norm_avg(self, slot = None, time_stamp = None,
                            plane = 'h'):                                    
     """
@@ -1552,10 +1575,11 @@ class BSRTprofiles(object):
       print('in get_profile_norm_avg: Data could not be extracted! Have you run ' +
             'self.norm() to normalize profiles?')
       return
-    if len(np.where(mask==True)[0]) == 1:
-      return self.profiles_norm_avg[plane][slot][mask][0]
-    else:
-      return self.profiles_norm_avg[plane][slot][mask]
+#    if len(np.where(mask==True)[0]) == 1:
+#      return self.profiles_norm_avg[plane][slot][mask][0]
+#    else:
+#      return self.profiles_norm_avg[plane][slot][mask]
+    return self.profiles_norm_avg[plane][slot][mask]
   def get_profile_norm_mvavg(self, slot = None, time_stamp = None,
                            plane = 'h'):                                    
     """
@@ -1569,20 +1593,22 @@ class BSRTprofiles(object):
       print('in get_profile_norm_mvavg: Data could not be extracted! Have you run ' +
             'self.norm() to normalize profiles?')
       return
-    if len(np.where(mask==True)[0]) == 1:
-      return self.profiles_norm_mvavg[plane][slot][mask][0]
-    else:
-      return self.profiles_norm_mvavg[plane][slot][mask]
+#    if len(np.where(mask==True)[0]) == 1:
+#      return self.profiles_norm_mvavg[plane][slot][mask][0]
+#    else:
+#      return self.profiles_norm_mvavg[plane][slot][mask]
+    return self.profiles_norm_mvavg[plane][slot][mask]
   def get_profile_avg_stat(self, slot = None, time_stamp = None, plane = 'h'):
     """
     get profile data for slot *slot*, time stamp *time_stamp* as
     unix time [ns] and plane *plane*
     """
     mask = self.profiles_norm_avg_stat[plane][slot]['time_stamp'] == time_stamp
-    if len(np.where(mask==True)[0]) == 1:
-      return self.profiles_norm_avg_stat[plane][slot][mask][0]
-    else:
-      return self.profiles_norm_avg_stat[plane][slot][mask]
+#    if len(np.where(mask==True)[0]) == 1:
+#      return self.profiles_norm_avg_stat[plane][slot][mask][0]
+#    else:
+#      return self.profiles_norm_avg_stat[plane][slot][mask]
+    return self.profiles_norm_avg_stat[plane][slot][mask]
   def get_profile_mvavg_stat(self, slot = None, time_stamp = None, plane = 'h'):
     """
     get profile data for slot *slot*, time stamp *time_stamp* as
@@ -1689,7 +1715,7 @@ class BSRTprofiles(object):
                  fmt='%Y-%m-%d %H:%M:%S.SSS',zone='cern')
         pl.gca().set_title('slot %s, %s plane, %s'%(slot,
                              plane.upper(),ts))
-      except ValueError:
+      except (ValueError,IndexError):
         if verbose:
           print('ERROR: plotting of slot %s, '%(slot) +
           'profile %s, time stamp %s failed.'%(i,time_stamp) +
