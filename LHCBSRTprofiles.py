@@ -2436,18 +2436,18 @@ class BSRTprofiles(object):
     # profile
     prof = self.get_profile_norm_mvavg(slot=slot,
              time_stamp = time_stamp, plane = plane)
-    ax1.plot(prof['pos']*xscale,prof['amp'],'k-',label='profile')
-    ax1.fill_between(x=prof['pos']*xscale,y1=prof['amp']-prof['amperr'],
-                    y2=prof['amp']+prof['amperr'],color='k',alpha=0.3)
+    ax1.plot(prof['pos'][0]*xscale,prof['amp'][0],'k-',label='profile')
+    ax1.fill_between(x=prof['pos'][0]*xscale,y1=prof['amp'][0]-prof['amperr'][0],
+                    y2=prof['amp'][0]+prof['amperr'][0],color='k',alpha=0.3)
     # Gaussian fit
     stat_aux = self.get_profile_mvavg_stat(slot=slot,
                  time_stamp=time_stamp,plane=plane)
     c_gauss, a_gauss = stat_aux['c_gauss'], stat_aux['a_gauss']
     cent_gauss = stat_aux['cent_gauss']
     sigma_gauss    = stat_aux['sigma_gauss']
-    amp_gauss = tb.gauss_pdf(prof['pos'],c_gauss,a_gauss,cent_gauss,
+    amp_gauss = tb.gauss_pdf(prof['pos'][0],c_gauss,a_gauss,cent_gauss,
                              sigma_gauss)
-    ax1.plot(prof['pos']*xscale,amp_gauss,color='r',
+    ax1.plot(prof['pos'][0]*xscale,amp_gauss,color='r',
              linewidth=1,label='Gaussian fit')
     ax1.set_ylim(1.e-3,0.7)
     ax1.grid(b=True)
@@ -2462,20 +2462,20 @@ class BSRTprofiles(object):
       # get overlapping positions
       prof_ref = self.get_profile_norm_mvavg(slot=slot,
                      time_stamp = time_stamp_ref, plane = plane)
-      xval = list(set(prof['pos']) and set(prof_ref['pos']))
-      mask     = np.array([ pos in xval for pos in prof['pos'] ],
+      xval = list(set(prof['pos'][0]).intersection(set(prof_ref['pos'][0])))
+      mask     = np.array([ pos in xval for pos in prof['pos'][0] ],
                           dtype=bool)
-      mask_ref = np.array([ pos in xval for pos in prof_ref['pos'] ],
+      mask_ref = np.array([ pos in xval for pos in prof_ref['pos'][0] ],
                           dtype=bool)
-      pos = prof['pos'][mask]*xscale
-      res = 1.e2*(prof['amp'][mask]-prof_ref['amp'][mask])
-      sig = 1.e2*(np.sqrt(prof['amperr'][mask]**2+prof_ref['amperr'][mask]**2)) 
+      pos = prof['pos'][0][mask]*xscale
+      res = 1.e2*(prof['amp'][0][mask]-prof_ref['amp'][0][mask_ref])
+      sig = 1.e2*(np.sqrt(prof['amperr'][0][mask]**2+prof_ref['amperr'][0][mask_ref]**2)) 
       ax2.plot(pos,res,'k-',label=r'Profile($t$) - Profile($t_{\rm{ref}}$)')
       ax2.fill_between(x=pos,y1=res-sig,y2=res+sig,color='k',alpha=0.3)
     #    Gaussian fit residual
     if resfit:
-      res = 1.e2*(prof['amp']-amp_gauss)
-      ax2.plot(prof['pos']*xscale,res,'r-',label='Profile($t$) - Gaussian fit($t$)')
+      res = 1.e2*(prof['amp'][0]-amp_gauss)
+      ax2.plot(prof['pos'][0]*xscale,res,'r-',label='Profile($t$) - Gaussian fit($t$)')
     if resfit or resavg:
       ax2.set_ylim(-5,5)
       ax2.grid(b=True)
@@ -2539,7 +2539,7 @@ class BSRTprofiles(object):
       # set slot and plane, initialize variables
       check_plot[plane] = {}
       # generate the figure and subplot
-      for slot in self._set_slots(plane=plane,slot=slot):
+      for slot in self._set_slots(plane=plane,slot=slots):
         if os.path.exists(tmpdir) == False:
           os.makedirs(tmpdir)
         check_plot[plane][slot] = []
