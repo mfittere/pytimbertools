@@ -1731,16 +1731,16 @@ class BSRTprofiles(object):
         profs_avg['pos'] = prof_smooth[:,0]
         profs_avg['amp'] = prof_smooth[:,1]
       # plot average over profiles
-      pl.plot(profs_avg['pos']*xscale,profs_avg['amp'],
+      pl.plot(profs_avg['pos'][0]*xscale,profs_avg['amp'][0],
               label = 'average profile',color='k',linestyle='-')
       if self.profiles_norm_avg_stat is not None:
         # plot Gaussian fit
-        pl.plot(profs_avg['pos']*xscale,tb.gauss_pdf(profs_avg['pos'],
+        pl.plot(profs_avg['pos'][0]*xscale,tb.gauss_pdf(profs_avg['pos'][0],
                 c_gauss,a_gauss,cent_gauss,sigma_gauss),
                 color=fit_colors['Red'],
                 linestyle='--',linewidth=1,label='Gaussian fit')
         # plot q-Gaussian fit
-        pl.plot(profs_avg['pos']*xscale,tb.qgauss_pdf(profs_avg['pos'],
+        pl.plot(profs_avg['pos'][0]*xscale,tb.qgauss_pdf(profs_avg['pos'][0],
                 c_qgauss,acq_qgauss,q_qgauss,cent_qgauss,beta_qgauss),
                 color=fit_colors['DarkRed'],
                 linestyle='-',linewidth=1,label='q-Gaussian fit')
@@ -1870,17 +1870,17 @@ class BSRTprofiles(object):
         pass
     # average profile
     if check_plot:
-      dx = profs_avg['pos'][1]-profs_avg['pos'][0]
-      pl.plot(profs_avg['pos']*xscale,(dx*profs_avg['amp']).cumsum(),
+      dx = profs_avg['pos'][0][1]-profs_avg['pos'][0][0]
+      pl.plot(profs_avg['pos'][0]*xscale,(dx*profs_avg['amp'][0]).cumsum(),
             label = 'average profile',color='k',linestyle='-')
       pl.xlabel('position [mm]')
       if self.profiles_norm_avg_stat is not None:
-        pl.plot(profs_avg['pos']*xscale,(dx*tb.gauss_pdf(profs_avg['pos'],
+        pl.plot(profs_avg['pos'][0]*xscale,(dx*tb.gauss_pdf(profs_avg['pos'][0],
                 sta['c_gauss'],sta['a_gauss'],sta['cent_gauss'],
                 sta['sigma_gauss'])).cumsum(),
                 label = 'Gaussian fit',color = fit_colors['Red'],
                 linestyle = '--')
-        pl.plot(profs_avg['pos']*xscale,(dx*tb.qgauss_pdf(profs_avg['pos'],
+        pl.plot(profs_avg['pos'][0]*xscale,(dx*tb.qgauss_pdf(profs_avg['pos'][0],
                 sta['c_qgauss'],sta['acq_qgauss'],sta['q_qgauss'],
                 sta['cent_qgauss'],sta['beta_qgauss'])).cumsum(),
                 label = 'q-Gaussian fit', 
@@ -2008,10 +2008,10 @@ class BSRTprofiles(object):
         pp['pos'] = prof_smooth[:,0]
         pp['amp'] = prof_smooth[:,1]
     # take only values for which x-range of profile coincides
-    xval = list(set(profs_avg['pos']).intersection(set(profs_ref_avg['pos'])))
-    mask = np.array([ pos in xval for pos in profs_avg['pos'] ],
+    xval = list(set(profs_avg['pos'][0]).intersection(set(profs_ref_avg['pos'][0])))
+    mask = np.array([ pos in xval for pos in profs_avg['pos'][0] ],
                     dtype=bool)
-    mask_ref = np.array([ pos in xval for pos in profs_ref_avg['pos'] ],
+    mask_ref = np.array([ pos in xval for pos in profs_ref_avg['pos'][0] ],
                         dtype=bool)
     # individual profiles
     # check_plot = flag if profile plot failed
@@ -2037,11 +2037,11 @@ class BSRTprofiles(object):
           pass
     #  average profile
     # shorten the names
-    pos_avg = profs_avg['pos'][mask]
-    amp_avg = profs_avg['amp'][mask]
-    sig_avg = profs_avg['amperr'][mask]
-    amp_ref = profs_ref_avg['amp'][mask_ref]
-    sig_ref = profs_ref_avg['amperr'][mask_ref]
+    pos_avg = profs_avg['pos'][0][mask]
+    amp_avg = profs_avg['amp'][0][mask]
+    sig_avg = profs_avg['amperr'][0][mask]
+    amp_ref = profs_ref_avg['amp'][0][mask_ref]
+    sig_ref = profs_ref_avg['amperr'][0][mask_ref]
     if flag == 'residual':
       try:
         # plot error of residual as one sigma envelope
@@ -2051,7 +2051,7 @@ class BSRTprofiles(object):
         if errbar:
           sig = np.sqrt(sig_avg**2+sig_ref**2)
           res = amp_avg - amp_ref
-          pl.fill_between(profs_avg['pos'][mask]*xscale,res-sig,res+sig,
+          pl.fill_between(profs_avg['pos'][0][mask]*xscale,res-sig,res+sig,
                   alpha=0.2,color='k')
           # Gaussian fit
           c_gauss, a_gauss = sta['c_gauss'], sta['a_gauss']
@@ -2369,7 +2369,7 @@ class BSRTprofiles(object):
       shutil.rmtree(tmpdir)
   def plot_all_ipac17(self,slot = None, time_stamp = None, 
                time_stamp_ref = None, xaxis = 'sigma', plane = 'h',
-               resavg=False,resfit=True,verbose = False):
+               resavg=True,resfit=True,verbose = False):
     """
     simplified version of plot_all for IPAC. Takes as reference bunch
     the same bunch.
@@ -2450,7 +2450,7 @@ class BSRTprofiles(object):
     ax1.plot(prof['pos'][0]*xscale,amp_gauss,color='r',
              linewidth=1,label='Gaussian fit')
     ax1.set_ylim(1.e-3,0.7)
-    ax1.grid(b=True)
+#    ax1.grid(b=True)
     ax1.set_ylabel(r'probability $A$ [a.u.]',fontsize=14)
     ax1.set_yscale('log')
     ax1.set_title('')
@@ -2478,7 +2478,7 @@ class BSRTprofiles(object):
       ax2.plot(prof['pos'][0]*xscale,res,'r-',label='Profile($t$) - Gaussian fit($t$)')
     if resfit or resavg:
       ax2.set_ylim(-5,5)
-      ax2.grid(b=True)
+#      ax2.grid(b=True)
       ax2.set_ylabel(r'residual [$10^{-2}$]',fontsize=14)
       ax2.legend(bbox_to_anchor=(0., 1.02, 1., .102), loc=3,
                   ncol=1, mode="expand", borderaxespad=0.,
@@ -2494,7 +2494,7 @@ class BSRTprofiles(object):
       else:
         lbl=(r'position [$\sigma_{\rm{Prof}}$], '+
             r'$\sigma_{\rm{Prof}}$ = %2.2f mm'%sigma_gauss)
-      ax2.set_xlabel(lbl,fontsize=10)
+      ax2.set_xlabel(lbl,fontsize=14)
       ax2.xaxis.set_tick_params(labelsize=14)
       #otherwise leave unchanged
     else:
