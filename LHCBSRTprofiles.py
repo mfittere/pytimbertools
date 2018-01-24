@@ -2178,7 +2178,7 @@ class BSRTprofiles(object):
     ts_ref = ld.dumpdate(t=time_stamp_ref*1.e-9,
                            fmt='%Y-%m-%d %H:%M:%S',zone='cern')
     pl.suptitle('%s plane, slot %s - %s, '%(plane.upper(),slot,ts) +
-                'ref slot %s - %s'%(slot_ref,ts_ref))
+                'ref slot %s - %s'%(slot_ref,ts_ref),fontsize=12)
     # 1) profile plot
     pl.subplot(223)
     # flaux = flag for checking if profile plots have failed
@@ -2201,7 +2201,7 @@ class BSRTprofiles(object):
            time_stamp_ref=time_stamp_ref, plane=plane, mvavg = mvavg,
            errbar=errbar, smooth=smooth,xaxis=xaxis,
            verbose=verbose)
-    pl.gca().set_ylim(-0.07,0.07)
+    pl.gca().set_ylim(-0.022,0.025)
 #     4) ratio
     pl.subplot(222)
     self._plot_residual_ratio(flag='ratio', flagprof='avg', 
@@ -2209,7 +2209,7 @@ class BSRTprofiles(object):
            time_stamp_ref=time_stamp_ref, plane=plane, mvavg=mvavg, 
            errbar=errbar, smooth=smooth,xaxis=xaxis,
            verbose=verbose)
-    pl.gca().set_ylim(-1,5)
+    pl.gca().set_ylim(0.75,1.25)
     # remove subplot titles, shrink legend size and put it on top of
     # the subplot
     for i in xrange(4):
